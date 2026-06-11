@@ -1,0 +1,2 @@
+timestamp,status,reason,data_path
+2026-06-11T07:53:39Z,success,verification,D:\project\waste-volume-prediction\data\raw\waste_dataset.csv
