@@ -42,6 +42,7 @@ models/*.pkl
 
 # Processed data
 data/processed/
+data/*.db
 
 # IDE
 .vscode/

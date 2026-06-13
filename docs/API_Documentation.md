@@ -74,7 +74,10 @@ Get basic API information.
     "docs": "/docs",
     "daily_prediction": "/predict/daily",
     "weekly_prediction": "/predict/weekly",
-    "monthly_prediction": "/predict/monthly"
+    "monthly_prediction": "/predict/monthly",
+    "iot_ingest": "/iot/bin-reading",
+    "iot_latest": "/iot/bin-readings/latest",
+    "iot_bin_latest": "/iot/bin/{bin_id}/latest"
   },
   "status": "operational"
 }
@@ -263,6 +266,53 @@ Predict total waste volume for 30 consecutive days.
   ]
 }
 ```
+
+---
+
+### 6. ESP32 Smart Bin Reading
+
+Store one ESP32 smart-bin fill-level reading.
+
+**Endpoint**: `POST /iot/bin-reading`
+
+**Request Body**:
+
+| Field | Type | Required | Range | Description |
+|-------|------|----------|-------|-------------|
+| bin_id | string | Yes | 1 - 80 chars | Smart bin identifier |
+| fill_level | float | Yes | 0.0 - 100.0 | Bin fill percentage |
+| device_id | string | Yes | 1 - 80 chars | ESP32 device identifier |
+
+**Response**: `200 OK`
+
+```json
+{
+  "id": 1,
+  "bin_id": "TPS-001",
+  "device_id": "ESP32-001",
+  "fill_level": 72.5,
+  "status": "high",
+  "created_at": "2026-06-13T02:16:00Z"
+}
+```
+
+---
+
+### 7. Latest Smart Bin Readings
+
+Return recent ESP32 smart-bin readings.
+
+**Endpoint**: `GET /iot/bin-readings/latest`
+
+Optional query parameter:
+
+| Field | Type | Default | Range | Description |
+|-------|------|---------|-------|-------------|
+| limit | integer | 20 | 1 - 100 | Maximum readings to return |
+
+**Endpoint**: `GET /iot/bin/{bin_id}/latest`
+
+Returns the newest reading for a single smart bin, or `404 Not Found` if the bin has no readings.
 
 ---
 

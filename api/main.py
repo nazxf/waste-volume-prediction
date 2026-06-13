@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, Dict, List, Union
 from datetime import datetime
+from iot_storage import get_latest_bin_reading, get_latest_readings, save_bin_reading
 
 # Import predictor
 try:
@@ -130,6 +131,31 @@ class ExportPredictionRequest(PredictionInput):
     file_format: str = Field(default="excel", pattern="^(excel|pdf)$", description="Export format")
 
 
+class BinReadingRequest(BaseModel):
+    """Input schema for ESP32 smart-bin readings."""
+    bin_id: str = Field(..., min_length=1, max_length=80, description="Smart bin identifier", example="TPS-001")
+    fill_level: float = Field(..., ge=0.0, le=100.0, description="Bin fill level percentage", example=72.5)
+    device_id: str = Field(..., min_length=1, max_length=80, description="ESP32 device identifier", example="ESP32-001")
+
+    @field_validator("bin_id", "device_id")
+    @classmethod
+    def validate_required_text(cls, v):
+        """Reject blank identifiers after trimming whitespace."""
+        if not v.strip():
+            raise ValueError("Value cannot be blank")
+        return v.strip()
+
+
+class BinReadingResponse(BaseModel):
+    """Response schema for stored smart-bin readings."""
+    id: int
+    bin_id: str
+    device_id: str
+    fill_level: float
+    status: str
+    created_at: str
+
+
 # Endpoints
 @app.get("/", response_model=Dict[str, Any])
 async def root():
@@ -146,7 +172,10 @@ async def root():
             "monthly_prediction": "/predict/monthly",
             "anomaly_detection": "/detect/anomaly",
             "notifications": "/notifications/prediction-alert",
-            "prediction_export": "/export/prediction"
+            "prediction_export": "/export/prediction",
+            "iot_ingest": "/iot/bin-reading",
+            "iot_latest": "/iot/bin-readings/latest",
+            "iot_bin_latest": "/iot/bin/{bin_id}/latest"
         },
         "status": "operational" if PREDICTOR_LOADED else "model_not_loaded"
     }
@@ -167,6 +196,45 @@ async def health_check():
             "model_loaded": False,
             "message": f"Model not loaded: {PREDICTOR_ERROR}"
         }
+
+
+@app.post("/iot/bin-reading", response_model=BinReadingResponse)
+async def create_bin_reading(reading: BinReadingRequest):
+    """Store one ESP32 smart-bin fill-level reading."""
+    try:
+        return save_bin_reading(
+            bin_id=reading.bin_id,
+            device_id=reading.device_id,
+            fill_level=reading.fill_level,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save bin reading: {str(e)}")
+
+
+@app.get("/iot/bin-readings/latest", response_model=List[BinReadingResponse])
+async def latest_bin_readings(limit: int = 20):
+    """Return newest ESP32 smart-bin readings across all bins."""
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+
+    try:
+        return get_latest_readings(limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load bin readings: {str(e)}")
+
+
+@app.get("/iot/bin/{bin_id}/latest", response_model=BinReadingResponse)
+async def latest_bin_reading(bin_id: str):
+    """Return the newest ESP32 smart-bin reading for one bin."""
+    try:
+        reading = get_latest_bin_reading(bin_id=bin_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load bin reading: {str(e)}")
+
+    if reading is None:
+        raise HTTPException(status_code=404, detail=f"No readings found for bin_id '{bin_id}'")
+
+    return reading
 
 
 @app.post("/predict/daily", response_model=DailyPredictionResponse)
