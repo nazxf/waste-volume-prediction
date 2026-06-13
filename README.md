@@ -134,6 +134,7 @@ waste-volume-prediction/
 │   ├── raw/
 │   │   └── waste_dataset.csv               # Dataset (auto-generated)
 │   └── processed/                          # Processed data (generated)
+│   └── iot_readings.db                     # SQLite IoT readings (runtime)
 │
 ├── models/                                  # 🤖 Trained models
 │   ├── random_forest.pkl                   # Random Forest model
@@ -146,8 +147,13 @@ waste-volume-prediction/
 │   ├── preprocess.py                       # Data preprocessing
 │   ├── train_model.py                      # Model training pipeline
 │   ├── predict.py                          # Prediction module
+│   ├── iot_storage.py                      # ESP32 smart-bin SQLite storage
 │   ├── evaluate.py                         # Model evaluation
 │   └── utils.py                            # Utility functions
+│
+├── firmware/                                # ESP32 demo firmware
+│   └── esp32_smart_bin_demo/
+│       └── esp32_smart_bin_demo.ino
 │
 ├── dashboard/                               # 🎨 Web dashboard
 │   └── app.py                              # Streamlit application
@@ -252,6 +258,7 @@ Dashboard akan terbuka di browser: `http://localhost:8501`
 - 🏠 **Dashboard Utama**: Overview dan quick metrics
 - 📊 **Analisis Data**: Visualisasi dan statistik
 - 🔮 **Prediksi**: Form input untuk prediksi custom
+- 🛰️ **Smart Bin IoT**: Monitoring data ESP32 smart bin
 - ⚡ **Performa Model**: Evaluasi dan metrics
 - ℹ️ **Tentang Sistem**: Informasi lengkap
 
@@ -268,6 +275,25 @@ API server akan berjalan di: `http://localhost:8000`
 **API Documentation:**
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+
+### Step 4: Demo ESP32 Smart Bin
+
+Kirim data contoh tanpa ESP32:
+
+```bash
+curl -X POST http://localhost:8000/iot/bin-reading \
+  -H "Content-Type: application/json" \
+  -d '{"bin_id":"TPS-001","fill_level":72.5,"device_id":"ESP32-001"}'
+```
+
+Cek data terbaru:
+
+```bash
+curl http://localhost:8000/iot/bin-readings/latest
+```
+
+Firmware ESP32 tersedia di `firmware/esp32_smart_bin_demo/esp32_smart_bin_demo.ino`.
+Panduan lengkap: [ESP32_Smart_Bin_Setup.md](docs/ESP32_Smart_Bin_Setup.md)
 
 ---
 
@@ -385,6 +411,38 @@ POST /predict/weekly
 POST /predict/monthly
 ```
 
+#### 5. ESP32 Smart Bin Reading
+```http
+POST /iot/bin-reading
+```
+
+Request Body:
+```json
+{
+  "bin_id": "TPS-001",
+  "fill_level": 72.5,
+  "device_id": "ESP32-001"
+}
+```
+
+Response:
+```json
+{
+  "id": 1,
+  "bin_id": "TPS-001",
+  "device_id": "ESP32-001",
+  "fill_level": 72.5,
+  "status": "high",
+  "created_at": "2026-06-13T02:16:00Z"
+}
+```
+
+#### 6. Latest Smart Bin Readings
+```http
+GET /iot/bin-readings/latest
+GET /iot/bin/{bin_id}/latest
+```
+
 **Dokumentasi lengkap**: Lihat [API_Documentation.md](docs/API_Documentation.md)
 
 ---
@@ -401,6 +459,7 @@ Dokumentasi lengkap tersedia di folder `docs/`:
 | [Architecture_Document.md](docs/Architecture_Document.md) | Arsitektur sistem lengkap |
 | [User_Manual.md](docs/User_Manual.md) | Panduan penggunaan step-by-step |
 | [API_Documentation.md](docs/API_Documentation.md) | Dokumentasi API lengkap |
+| [ESP32_Smart_Bin_Setup.md](docs/ESP32_Smart_Bin_Setup.md) | Panduan ESP32 smart bin local demo |
 
 ---
 
@@ -430,12 +489,19 @@ Dokumentasi lengkap tersedia di folder `docs/`:
 - Notification endpoint: `POST /notifications/prediction-alert`
 
 ### 🚀 Phase 3: Integration (Q4 2026)
-- [ ] IoT sensor integration (smart bins)
+- [x] IoT sensor integration local demo (ESP32 smart bins)
 - [ ] GPS tracking untuk waste trucks
 - [ ] Route optimization algorithm
 - [ ] Mobile application (iOS/Android)
 - [ ] Real-time dashboard updates
 - [ ] Integration dengan GIS mapping
+
+**Phase 3 local demo highlights:**
+- ESP32 firmware example: `firmware/esp32_smart_bin_demo/esp32_smart_bin_demo.ino`
+- IoT ingest endpoint: `POST /iot/bin-reading`
+- Latest readings endpoints: `GET /iot/bin-readings/latest`, `GET /iot/bin/{bin_id}/latest`
+- Dashboard page: `Smart Bin IoT`
+- Setup guide: [ESP32_Smart_Bin_Setup.md](docs/ESP32_Smart_Bin_Setup.md)
 
 ### 🌟 Phase 4: Advanced Analytics (2027)
 - [ ] Waste composition prediction

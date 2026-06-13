@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 import joblib
+from iot_storage import get_latest_readings
 
 # Import custom modules
 try:
@@ -576,6 +577,88 @@ def page_model_performance():
         st.warning("Metadata Phase 2 belum tersedia. Jalankan `python src/train_model.py` terlebih dahulu.")
 
 
+def page_smart_bin_iot():
+    """Smart Bin IoT monitoring page."""
+    st.markdown('<div class="main-header">Smart Bin IoT</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Monitoring level tempat sampah dari ESP32</div>', unsafe_allow_html=True)
+
+    if st.button("Refresh Data", use_container_width=True):
+        st.rerun()
+
+    try:
+        readings = get_latest_readings(limit=50)
+    except Exception as e:
+        st.error(f"Gagal membaca database IoT: {e}")
+        return
+
+    if not readings:
+        st.warning("Belum ada data ESP32. Kirim data ke endpoint `/iot/bin-reading` terlebih dahulu.")
+        st.code(
+            'curl -X POST http://localhost:8000/iot/bin-reading '
+            '-H "Content-Type: application/json" '
+            '-d "{\\"bin_id\\":\\"TPS-001\\",\\"fill_level\\":72.5,\\"device_id\\":\\"ESP32-001\\"}"',
+            language="bash",
+        )
+        return
+
+    df = pd.DataFrame(readings)
+    df["created_at"] = pd.to_datetime(df["created_at"])
+    latest = df.iloc[0]
+
+    status_colors = {
+        "low": "#28a745",
+        "medium": "#ffc107",
+        "high": "#fd7e14",
+        "full": "#dc3545",
+    }
+    status_color = status_colors.get(latest["status"], "#1f77b4")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Bin Terbaru", latest["bin_id"])
+    with col2:
+        st.metric("Fill Level", f"{latest['fill_level']:.1f}%")
+    with col3:
+        st.markdown(
+            f"""
+            <div style="background-color:{status_color}; color:white; padding:0.8rem; border-radius:0.5rem; text-align:center; font-weight:bold;">
+                {latest['status'].upper()}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col4:
+        st.metric("Device", latest["device_id"])
+
+    st.caption(f"Update terakhir: {latest['created_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    st.progress(min(float(latest["fill_level"]) / 100, 1.0))
+
+    st.markdown("---")
+    st.subheader("Tren Fill Level")
+
+    chart_df = df.sort_values("created_at")
+    fig = px.line(
+        chart_df,
+        x="created_at",
+        y="fill_level",
+        color="bin_id",
+        markers=True,
+        labels={
+            "created_at": "Waktu",
+            "fill_level": "Fill Level (%)",
+            "bin_id": "Bin ID",
+        },
+    )
+    fig.update_layout(height=400, yaxis_range=[0, 100], hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("Data Terbaru")
+    display_df = df[["created_at", "bin_id", "device_id", "fill_level", "status"]].copy()
+    display_df["created_at"] = display_df["created_at"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    st.dataframe(display_df, use_container_width=True)
+
+
 def page_about():
     """About System Page"""
     st.markdown('<div class="main-header">ℹ️ Tentang Sistem</div>', unsafe_allow_html=True)
@@ -675,6 +758,7 @@ def main():
             "🏠 Dashboard Utama",
             "📊 Analisis Data",
             "🔮 Prediksi Volume Sampah",
+            "Smart Bin IoT",
             "⚡ Performa Model",
             "ℹ️ Tentang Sistem"
         ]
@@ -704,6 +788,8 @@ def main():
         page_data_analysis()
     elif "Prediksi Volume Sampah" in page:
         page_prediction()
+    elif "Smart Bin IoT" in page:
+        page_smart_bin_iot()
     elif "Performa Model" in page:
         page_model_performance()
     elif "Tentang Sistem" in page:
