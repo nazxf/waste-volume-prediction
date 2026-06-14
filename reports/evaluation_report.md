@@ -11,39 +11,39 @@
 
 | Metric | Value |
 |--------|-------|
-| MAE (Mean Absolute Error) | 3.0006 tons |
-| RMSE (Root Mean Squared Error) | 4.0681 tons |
-| R2 Score | 0.9085 |
-| MAPE (Mean Absolute Percentage Error) | 3.76% |
+| MAE (Mean Absolute Error) | 3.2862 tons |
+| RMSE (Root Mean Squared Error) | 4.4623 tons |
+| R2 Score | 0.8803 |
+| MAPE (Mean Absolute Percentage Error) | 3.79% |
 
 ## Model Comparison
 
 | Model | MAE | RMSE | R2 | MAPE |
 |-------|-----|------|-------|------|
-| Random Forest | 3.1969 | 4.3598 | 0.8949 | 4.01% |
-| XGBoost * | 3.0006 | 4.0681 | 0.9085 | 3.76% |
-| Ensemble | 3.0273 | 4.1198 | 0.9061 | 3.80% |
+| Random Forest | 3.6649 | 5.0293 | 0.8480 | 4.18% |
+| XGBoost * | 3.2862 | 4.4623 | 0.8803 | 3.79% |
+| Ensemble | 3.3366 | 4.5966 | 0.8730 | 3.82% |
 
 ## Feature Importance
 
 | Rank | Feature | Importance |
 |------|---------|------------|
-| 1 | event_level | 0.3828 |
-| 2 | holiday | 0.2502 |
-| 3 | weekend | 0.2364 |
-| 4 | year | 0.0383 |
-| 5 | day_of_week | 0.0307 |
-| 6 | population_density | 0.0239 |
-| 7 | month | 0.0109 |
-| 8 | week_of_year | 0.0070 |
-| 9 | rainfall | 0.0051 |
-| 10 | temperature | 0.0035 |
+| 1 | event_level | 0.3618 |
+| 2 | holiday | 0.2565 |
+| 3 | weekend | 0.2505 |
+| 4 | day_of_week | 0.0327 |
+| 5 | year | 0.0277 |
+| 6 | population_density | 0.0213 |
+| 7 | month | 0.0116 |
+| 8 | is_month_start | 0.0099 |
+| 9 | week_of_year | 0.0088 |
+| 10 | rainfall | 0.0057 |
 
 ## Interpretation
 
-- **R2 Score (0.9085)**: Excellent - The model explains 90.85% of the variance in waste volume.
-- **RMSE (4.0681 tons)**: On average, predictions deviate by 4.07 tons from actual values.
-- **MAPE (3.76%)**: Average prediction error is 3.76% of actual values.
+- **R2 Score (0.8803)**: Very Good - The model explains 88.03% of the variance in waste volume.
+- **RMSE (4.4623 tons)**: On average, predictions deviate by 4.46 tons from actual values.
+- **MAPE (3.79%)**: Average prediction error is 3.79% of actual values.
 
 ## Recommendations
 

@@ -24,8 +24,13 @@ def get_bin_status(fill_level: float) -> str:
 
 def _connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # timeout makes writers wait for a lock instead of failing instantly, and
+    # WAL mode lets reads run concurrently with a writer. Together these avoid
+    # "database is locked" errors when several ESP32 devices post at once.
+    conn = sqlite3.connect(db_path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 
