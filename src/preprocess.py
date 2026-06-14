@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Tuple, List
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 
@@ -103,15 +102,18 @@ def engineer_date_features(df: pd.DataFrame) -> pd.DataFrame:
 def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str]]:
     """
     Prepare features and target for model training
-    
+
     Args:
         df: Input DataFrame
-        
+
     Returns:
         Tuple of (X features, y target, feature_names)
     """
     print("\nPreparing features and target...")
-    
+
+    # Sort chronologically so a temporal split keeps test data in the future
+    df = df.sort_values('date').reset_index(drop=True)
+
     # Drop date column for training
     df_model = df.drop('date', axis=1)
     
@@ -129,32 +131,42 @@ def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[st
 
 
 def split_data(
-    X: pd.DataFrame, 
-    y: pd.Series, 
-    test_size: float = 0.2, 
+    X: pd.DataFrame,
+    y: pd.Series,
+    test_size: float = 0.2,
     random_state: int = 42
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
-    Split data into training and testing sets
-    
+    Split data into training and testing sets using a temporal (chronological)
+    split.
+
+    Because waste volume is a time series, the test set must come strictly
+    after the training set in time. A random shuffle would leak future
+    information into training and inflate the reported metrics. X and y are
+    expected to already be sorted chronologically (see prepare_features).
+
     Args:
-        X: Features DataFrame
-        y: Target Series
-        test_size: Proportion of test set (default 0.2)
-        random_state: Random seed for reproducibility
-        
+        X: Features DataFrame (chronologically ordered)
+        y: Target Series (chronologically ordered)
+        test_size: Proportion of the most recent data used for testing (default 0.2)
+        random_state: Unused; kept for backward-compatible call signatures
+
     Returns:
         Tuple of (X_train, X_test, y_train, y_test)
     """
-    print(f"\nSplitting data (train: {int((1-test_size)*100)}%, test: {int(test_size*100)}%)...")
-    
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state
-    )
-    
-    print(f"[OK] Training set: {X_train.shape[0]} samples")
-    print(f"[OK] Test set: {X_test.shape[0]} samples")
-    
+    print(f"\nSplitting data temporally (train: {int((1-test_size)*100)}%, test: {int(test_size*100)}% most recent)...")
+
+    n_samples = len(X)
+    split_idx = int(n_samples * (1 - test_size))
+
+    X_train = X.iloc[:split_idx]
+    X_test = X.iloc[split_idx:]
+    y_train = y.iloc[:split_idx]
+    y_test = y.iloc[split_idx:]
+
+    print(f"[OK] Training set: {X_train.shape[0]} samples (earliest dates)")
+    print(f"[OK] Test set: {X_test.shape[0]} samples (most recent dates)")
+
     return X_train, X_test, y_train, y_test
 
 

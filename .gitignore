@@ -57,3 +57,5 @@ Thumbs.db
 
 # Logs
 *.log
+data/*.db-shm
+data/*.db-wal

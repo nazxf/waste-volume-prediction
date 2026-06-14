@@ -139,16 +139,23 @@ waste-volume-prediction/
 ├── models/                                  # 🤖 Trained models
 │   ├── random_forest.pkl                   # Random Forest model
 │   ├── xgboost.pkl                         # XGBoost model
+│   ├── ensemble_model.pkl                  # Voting ensemble model
 │   ├── best_model.pkl                      # Best performing model
+│   ├── anomaly_detector.pkl                # Isolation Forest anomaly detector
+│   ├── prediction_metadata.pkl             # Confidence interval & metadata
 │   └── feature_columns.pkl                 # Feature metadata
 │
 ├── src/                                     # 🔧 Source code
 │   ├── data_generator.py                   # Dataset generation
-│   ├── preprocess.py                       # Data preprocessing
+│   ├── preprocess.py                       # Data preprocessing (temporal split)
 │   ├── train_model.py                      # Model training pipeline
 │   ├── predict.py                          # Prediction module
-│   ├── iot_storage.py                      # ESP32 smart-bin SQLite storage
+│   ├── ensemble.py                         # Voting ensemble regressor
 │   ├── evaluate.py                         # Model evaluation
+│   ├── retrain.py                          # Automated retraining pipeline
+│   ├── notifications.py                    # Email/SMS alert helpers
+│   ├── export.py                           # Excel/PDF export utilities
+│   ├── iot_storage.py                      # ESP32 smart-bin SQLite storage
 │   └── utils.py                            # Utility functions
 │
 ├── firmware/                                # ESP32 demo firmware
@@ -303,12 +310,12 @@ Panduan lengkap: [ESP32_Smart_Bin_Setup.md](docs/ESP32_Smart_Bin_Setup.md)
 
 | Metric | Target | Achieved* | Description |
 |--------|--------|-----------|-------------|
-| **R² Score** | ≥ 0.85 | 0.92 | Proportion of variance explained |
-| **RMSE** | - | 3.24 tons | Root mean squared error |
-| **MAE** | - | 2.45 tons | Mean absolute error |
-| **MAPE** | ≤ 10% | 4.12% | Mean absolute percentage error |
+| **R² Score** | ≥ 0.85 | 0.88 | Proportion of variance explained |
+| **RMSE** | - | 4.46 tons | Root mean squared error |
+| **MAE** | - | 3.29 tons | Mean absolute error |
+| **MAPE** | ≤ 10% | 3.79% | Mean absolute percentage error |
 
-*Note: Actual results may vary based on data quality
+*Note: Metrik dievaluasi dengan **temporal split** (80% tanggal lama untuk training, 20% tanggal terbaru untuk test). Karena data bersifat time series, split kronologis ini mencegah kebocoran data (data leakage) sehingga angka mencerminkan performa forecasting yang sebenarnya. Hasil aktual dapat bervariasi tergantung kualitas data.
 
 ### Model Comparison
 
@@ -319,8 +326,9 @@ Model Comparison Results:
 ┌─────────────────┬──────────┬──────────┬──────────┬────────┐
 │ Model           │ MAE      │ RMSE     │ R²       │ MAPE   │
 ├─────────────────┼──────────┼──────────┼──────────┼────────┤
-│ Random Forest   │ 2.67     │ 3.45     │ 0.9012   │ 4.35%  │
-│ XGBoost      ⭐ │ 2.45     │ 3.24     │ 0.9234   │ 4.12%  │
+│ Random Forest   │ 3.66     │ 5.03     │ 0.8480   │ 4.18%  │
+│ XGBoost      ⭐ │ 3.29     │ 4.46     │ 0.8803   │ 3.79%  │
+│ Ensemble        │ 3.34     │ 4.60     │ 0.8730   │ 3.82%  │
 └─────────────────┴──────────┴──────────┴──────────┴────────┘
 
 🏆 Best Model: XGBoost
@@ -330,16 +338,16 @@ Model Comparison Results:
 
 Top 10 features yang paling berpengaruh:
 
-1. **population_density** (0.2345) - Kepadatan penduduk
-2. **event_level** (0.1876) - Tingkat event
-3. **weekend** (0.1234) - Flag akhir pekan
-4. **holiday** (0.1123) - Flag hari libur
-5. **month** (0.0987) - Bulan dalam tahun
-6. **temperature** (0.0765) - Suhu udara
-7. **day_of_week** (0.0654) - Hari dalam minggu
-8. **humidity** (0.0543) - Kelembaban
-9. **rainfall** (0.0432) - Curah hujan
-10. **year** (0.0321) - Tahun
+1. **event_level** (0.3618) - Tingkat event
+2. **holiday** (0.2565) - Flag hari libur
+3. **weekend** (0.2505) - Flag akhir pekan
+4. **day_of_week** (0.0327) - Hari dalam minggu
+5. **year** (0.0277) - Tahun
+6. **population_density** (0.0213) - Kepadatan penduduk
+7. **month** (0.0116) - Bulan dalam tahun
+8. **is_month_start** (0.0099) - Flag awal bulan
+9. **week_of_year** (0.0088) - Minggu dalam tahun
+10. **rainfall** (0.0057) - Curah hujan
 
 ---
 
@@ -392,6 +400,17 @@ Response:
   "date": "2025-06-15",
   "predicted_waste_volume": 85.23,
   "unit": "tons",
+  "confidence_interval": {
+    "confidence": 0.95,
+    "lower_bound": 76.5,
+    "upper_bound": 93.96,
+    "margin_of_error": 8.73
+  },
+  "anomaly": {
+    "is_anomaly": false,
+    "score": 0.1234,
+    "message": "Input is within normal training patterns"
+  },
   "fleet_recommendation": {
     "trucks_needed": 11,
     "truck_capacity": 8.0,
@@ -442,6 +461,32 @@ Response:
 GET /iot/bin-readings/latest
 GET /iot/bin/{bin_id}/latest
 ```
+
+#### 7. Anomaly Detection
+```http
+POST /detect/anomaly
+```
+Deteksi apakah input prediksi tergolong anomali dibanding pola data training.
+
+#### 8. Prediction Alert Notification
+```http
+POST /notifications/prediction-alert
+```
+Kirim/preview notifikasi (email/SMS) saat prediksi melewati threshold. Mendukung `dry_run`.
+
+#### 9. Export Prediction
+```http
+POST /export/prediction
+```
+Export prediksi harian/mingguan/bulanan ke Excel atau PDF.
+
+> **Catatan CORS**: Origin yang diizinkan dikonfigurasi lewat environment variable `ALLOWED_ORIGINS` (dipisah koma). Default: `http://localhost:8501,http://127.0.0.1:8501`. Contoh:
+> ```bash
+> # Windows (cmd)
+> set ALLOWED_ORIGINS=http://localhost:8501,https://dashboard.example.com
+> # Linux/macOS
+> export ALLOWED_ORIGINS=http://localhost:8501,https://dashboard.example.com
+> ```
 
 **Dokumentasi lengkap**: Lihat [API_Documentation.md](docs/API_Documentation.md)
 
@@ -576,13 +621,12 @@ Project ini dilisensikan di bawah MIT License - lihat file [LICENSE](LICENSE) un
 
 ## 📈 Project Statistics
 
-- **Lines of Code**: ~3,500
-- **Test Coverage**: 85%
-- **Documentation Pages**: 6
+- **Lines of Code**: ~3,700
+- **Documentation Pages**: 7
 - **Supported Python Version**: 3.11+
-- **Dependencies**: 12 packages
-- **API Endpoints**: 5
-- **Dashboard Pages**: 5
+- **Dependencies**: 14 packages
+- **API Endpoints**: 11
+- **Dashboard Pages**: 6
 
 ---
 

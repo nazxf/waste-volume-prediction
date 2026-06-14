@@ -2,6 +2,8 @@
 FastAPI REST API for Waste Volume Prediction System
 Provides endpoints for daily, weekly, and monthly predictions
 """
+import logging
+import os
 import sys
 from pathlib import Path
 from io import BytesIO
@@ -9,13 +11,37 @@ from io import BytesIO
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 from iot_storage import get_latest_bin_reading, get_latest_readings, save_bin_reading
+from dataset_stats import (
+    DatasetNotFoundError,
+    get_analysis as get_dataset_analysis,
+    get_overview as get_dataset_overview,
+)
+from model_report import (
+    FEATURE_IMPORTANCE_IMG,
+    PREDICTION_COMPARISON_IMG,
+    get_model_performance,
+)
+
+logger = logging.getLogger("waste_api")
+
+# IoT ingest API key. When IOT_API_KEY is set, devices must send a matching
+# X-API-Key header. When it is unset (e.g. local demo), the check is skipped.
+IOT_API_KEY = os.getenv("IOT_API_KEY", "").strip()
+
+
+def require_iot_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
+    """Validate the X-API-Key header against IOT_API_KEY when configured."""
+    if not IOT_API_KEY:
+        return  # no key configured; open for local demo use
+    if x_api_key != IOT_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Import predictor
 try:
@@ -41,11 +67,26 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add CORS middleware
+# Add CORS middleware.
+# Origins are read from the ALLOWED_ORIGINS env var (comma-separated). A
+# wildcard "*" cannot be combined with allow_credentials=True (browsers reject
+# it), so credentials are only enabled when explicit origins are configured.
+_default_origins = (
+    "http://localhost:8501,http://127.0.0.1:8501,"  # Streamlit dashboard
+    "http://localhost:5173,http://127.0.0.1:5173,"  # Vite dev server
+    "http://localhost:4173,http://127.0.0.1:4173"   # Vite preview server
+)
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+allow_credentials = "*" not in allowed_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -198,7 +239,59 @@ async def health_check():
         }
 
 
-@app.post("/iot/bin-reading", response_model=BinReadingResponse)
+@app.get("/stats/overview", response_model=Dict[str, Any])
+async def stats_overview(trend_days: int = 90):
+    """Headline dataset metrics and a recent waste-volume trend."""
+    if trend_days < 1 or trend_days > 730:
+        raise HTTPException(status_code=400, detail="trend_days must be between 1 and 730")
+    try:
+        return get_dataset_overview(trend_days=trend_days)
+    except DatasetNotFoundError:
+        raise HTTPException(status_code=503, detail="Dataset not available. Train the model first.")
+    except Exception:
+        logger.exception("Failed to build stats overview")
+        raise HTTPException(status_code=500, detail="Failed to load dataset overview")
+
+
+@app.get("/stats/analysis", response_model=Dict[str, Any])
+async def stats_analysis():
+    """Distribution, weekday averages, monthly trend, and correlation matrix."""
+    try:
+        return get_dataset_analysis()
+    except DatasetNotFoundError:
+        raise HTTPException(status_code=503, detail="Dataset not available. Train the model first.")
+    except Exception:
+        logger.exception("Failed to build stats analysis")
+        raise HTTPException(status_code=500, detail="Failed to load dataset analysis")
+
+
+@app.get("/model/performance", response_model=Dict[str, Any])
+async def model_performance():
+    """Evaluation report, parsed tables, and Phase 2 metadata."""
+    try:
+        return get_model_performance()
+    except Exception:
+        logger.exception("Failed to load model performance")
+        raise HTTPException(status_code=500, detail="Failed to load model performance")
+
+
+@app.get("/model/feature-importance.png")
+async def model_feature_importance_image():
+    """Serve the feature importance chart image."""
+    if not FEATURE_IMPORTANCE_IMG.exists():
+        raise HTTPException(status_code=404, detail="Feature importance image not available")
+    return FileResponse(FEATURE_IMPORTANCE_IMG, media_type="image/png")
+
+
+@app.get("/model/prediction-comparison.png")
+async def model_prediction_comparison_image():
+    """Serve the prediction comparison chart image."""
+    if not PREDICTION_COMPARISON_IMG.exists():
+        raise HTTPException(status_code=404, detail="Prediction comparison image not available")
+    return FileResponse(PREDICTION_COMPARISON_IMG, media_type="image/png")
+
+
+@app.post("/iot/bin-reading", response_model=BinReadingResponse, dependencies=[Depends(require_iot_api_key)])
 async def create_bin_reading(reading: BinReadingRequest):
     """Store one ESP32 smart-bin fill-level reading."""
     try:
@@ -207,8 +300,9 @@ async def create_bin_reading(reading: BinReadingRequest):
             device_id=reading.device_id,
             fill_level=reading.fill_level,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save bin reading: {str(e)}")
+    except Exception:
+        logger.exception("Failed to save bin reading")
+        raise HTTPException(status_code=500, detail="Failed to save bin reading")
 
 
 @app.get("/iot/bin-readings/latest", response_model=List[BinReadingResponse])
@@ -219,8 +313,9 @@ async def latest_bin_readings(limit: int = 20):
 
     try:
         return get_latest_readings(limit=limit)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load bin readings: {str(e)}")
+    except Exception:
+        logger.exception("Failed to load bin readings")
+        raise HTTPException(status_code=500, detail="Failed to load bin readings")
 
 
 @app.get("/iot/bin/{bin_id}/latest", response_model=BinReadingResponse)
@@ -228,8 +323,9 @@ async def latest_bin_reading(bin_id: str):
     """Return the newest ESP32 smart-bin reading for one bin."""
     try:
         reading = get_latest_bin_reading(bin_id=bin_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load bin reading: {str(e)}")
+    except Exception:
+        logger.exception("Failed to load bin reading for bin_id=%s", bin_id)
+        raise HTTPException(status_code=500, detail="Failed to load bin reading")
 
     if reading is None:
         raise HTTPException(status_code=404, detail=f"No readings found for bin_id '{bin_id}'")
@@ -273,9 +369,10 @@ async def predict_daily(input_data: PredictionInput):
             "anomaly": prediction["anomaly"],
             "fleet_recommendation": prediction["fleet_recommendation"]
         }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+    except Exception:
+        logger.exception("Daily prediction failed")
+        raise HTTPException(status_code=500, detail="Prediction failed")
 
 
 @app.post("/predict/weekly", response_model=WeeklyPredictionResponse)
@@ -318,9 +415,10 @@ async def predict_weekly(input_data: PredictionInput):
             "confidence_interval": weekly_result["confidence_interval"],
             "daily_predictions": weekly_result['daily_predictions']
         }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+    except Exception:
+        logger.exception("Weekly prediction failed")
+        raise HTTPException(status_code=500, detail="Prediction failed")
 
 
 @app.post("/predict/monthly", response_model=MonthlyPredictionResponse)
@@ -363,9 +461,10 @@ async def predict_monthly(input_data: PredictionInput):
             "confidence_interval": monthly_result["confidence_interval"],
             "daily_predictions": monthly_result['daily_predictions']
         }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+    except Exception:
+        logger.exception("Monthly prediction failed")
+        raise HTTPException(status_code=500, detail="Prediction failed")
 
 
 @app.post("/detect/anomaly", response_model=Dict[str, Any])
@@ -380,8 +479,9 @@ async def detect_anomaly(input_data: PredictionInput):
     try:
         input_dict = input_data.model_dump()
         return predictor.detect_anomaly(input_dict)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Anomaly detection failed: {str(e)}")
+    except Exception:
+        logger.exception("Anomaly detection failed")
+        raise HTTPException(status_code=500, detail="Anomaly detection failed")
 
 
 @app.post("/notifications/prediction-alert", response_model=Dict[str, Any])
@@ -424,8 +524,9 @@ async def prediction_alert(request: NotificationRequest):
             "prediction": prediction,
             "notifications": notification_results
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Notification workflow failed: {str(e)}")
+    except Exception:
+        logger.exception("Notification workflow failed")
+        raise HTTPException(status_code=500, detail="Notification workflow failed")
 
 
 @app.post("/export/prediction")
@@ -493,8 +594,9 @@ async def export_prediction(request: ExportPredictionRequest):
             media_type=media_type,
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+    except Exception:
+        logger.exception("Export failed")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 # Run with: uvicorn api.main:app --reload
