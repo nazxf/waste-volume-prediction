@@ -6,6 +6,17 @@ import tailwindcss from "@tailwindcss/vite";
 // browser never hits a cross-origin URL; in prod set VITE_API_BASE instead.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          charts: ["recharts"],
+          icons: ["lucide-react"],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

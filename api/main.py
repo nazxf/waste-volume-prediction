@@ -5,19 +5,21 @@ Provides endpoints for daily, weekly, and monthly predictions
 import logging
 import os
 import sys
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 from io import BytesIO
 
 # Add src to path
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
-from iot_storage import get_latest_bin_reading, get_latest_readings, save_bin_reading
+from iot_storage import DEFAULT_DB_PATH, get_latest_bin_reading, get_latest_readings, init_iot_db, save_bin_reading
 from dataset_stats import (
     DatasetNotFoundError,
     get_analysis as get_dataset_analysis,
@@ -29,11 +31,20 @@ from model_report import (
     get_model_performance,
 )
 
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 logger = logging.getLogger("waste_api")
 
 # IoT ingest API key. When IOT_API_KEY is set, devices must send a matching
 # X-API-Key header. When it is unset (e.g. local demo), the check is skipped.
 IOT_API_KEY = os.getenv("IOT_API_KEY", "").strip()
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
+RATE_LIMIT_EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+_rate_limit_window: Dict[str, deque[float]] = defaultdict(deque)
 
 
 def require_iot_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
@@ -92,17 +103,45 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def rate_limit_requests(request: Request, call_next):
+    """Simple per-client in-memory rate limit for lightweight deployments."""
+    if RATE_LIMIT_PER_MINUTE <= 0 or request.url.path in RATE_LIMIT_EXEMPT_PATHS:
+        return await call_next(request)
+
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    client_host = forwarded_for.split(",", 1)[0].strip() if forwarded_for else None
+    if not client_host:
+        client_host = request.client.host if request.client else "unknown"
+    key = f"{client_host}:{request.url.path}"
+    now = time.monotonic()
+    request_times = _rate_limit_window[key]
+
+    while request_times and now - request_times[0] > 60:
+        request_times.popleft()
+
+    if len(request_times) >= RATE_LIMIT_PER_MINUTE:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please retry later."},
+            headers={"Retry-After": "60"},
+        )
+
+    request_times.append(now)
+    return await call_next(request)
+
+
 # Pydantic models for request/response
 class PredictionInput(BaseModel):
     """Input schema for prediction"""
-    date: str = Field(..., description="Date in YYYY-MM-DD format", example="2025-01-15")
-    temperature: float = Field(..., ge=24.0, le=35.0, description="Temperature in Celsius", example=30.5)
-    rainfall: float = Field(..., ge=0.0, le=120.0, description="Rainfall in mm", example=5.0)
-    humidity: float = Field(..., ge=55.0, le=95.0, description="Humidity percentage", example=75.0)
-    holiday: int = Field(..., ge=0, le=1, description="Holiday flag (0=No, 1=Yes)", example=0)
-    weekend: int = Field(..., ge=0, le=1, description="Weekend flag (0=No, 1=Yes)", example=0)
-    population_density: float = Field(..., ge=3000.0, le=15000.0, description="Population density (people/km2)", example=9500.0)
-    event_level: int = Field(..., ge=0, le=5, description="Event level (0-5)", example=1)
+    date: str = Field(..., description="Date in YYYY-MM-DD format", json_schema_extra={"example": "2025-01-15"})
+    temperature: float = Field(..., ge=24.0, le=35.0, description="Temperature in Celsius", json_schema_extra={"example": 30.5})
+    rainfall: float = Field(..., ge=0.0, le=120.0, description="Rainfall in mm", json_schema_extra={"example": 5.0})
+    humidity: float = Field(..., ge=55.0, le=95.0, description="Humidity percentage", json_schema_extra={"example": 75.0})
+    holiday: int = Field(..., ge=0, le=1, description="Holiday flag (0=No, 1=Yes)", json_schema_extra={"example": 0})
+    weekend: int = Field(..., ge=0, le=1, description="Weekend flag (0=No, 1=Yes)", json_schema_extra={"example": 0})
+    population_density: float = Field(..., ge=3000.0, le=15000.0, description="Population density (people/km2)", json_schema_extra={"example": 9500.0})
+    event_level: int = Field(..., ge=0, le=5, description="Event level (0-5)", json_schema_extra={"example": 1})
     
     @field_validator('date')
     @classmethod
@@ -157,13 +196,27 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     message: str
+    checks: Dict[str, Any] = Field(default_factory=dict)
 
 
 class NotificationRequest(PredictionInput):
     """Request schema for notification checks"""
-    threshold: float = Field(..., ge=0.0, description="Alert threshold in tons", example=100.0)
-    channels: List[str] = Field(default=["email"], description="Notification channels: email and/or sms")
+    threshold: float = Field(..., ge=0.0, description="Alert threshold in tons", json_schema_extra={"example": 100.0})
+    channels: List[str] = Field(default_factory=lambda: ["email"], description="Notification channels: email and/or sms")
     dry_run: bool = Field(default=True, description="Return notification preview without sending")
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, v):
+        """Reject unsupported notification channels instead of silently ignoring them."""
+        allowed_channels = {"email", "sms"}
+        normalized = [channel.strip().lower() for channel in v]
+        invalid_channels = sorted(set(normalized) - allowed_channels)
+        if invalid_channels:
+            raise ValueError(f"Unsupported notification channel(s): {', '.join(invalid_channels)}")
+        if not normalized:
+            raise ValueError("At least one notification channel is required")
+        return normalized
 
 
 class ExportPredictionRequest(PredictionInput):
@@ -174,9 +227,9 @@ class ExportPredictionRequest(PredictionInput):
 
 class BinReadingRequest(BaseModel):
     """Input schema for ESP32 smart-bin readings."""
-    bin_id: str = Field(..., min_length=1, max_length=80, description="Smart bin identifier", example="TPS-001")
-    fill_level: float = Field(..., ge=0.0, le=100.0, description="Bin fill level percentage", example=72.5)
-    device_id: str = Field(..., min_length=1, max_length=80, description="ESP32 device identifier", example="ESP32-001")
+    bin_id: str = Field(..., min_length=1, max_length=80, description="Smart bin identifier", json_schema_extra={"example": "TPS-001"})
+    fill_level: float = Field(..., ge=0.0, le=100.0, description="Bin fill level percentage", json_schema_extra={"example": 72.5})
+    device_id: str = Field(..., min_length=1, max_length=80, description="ESP32 device identifier", json_schema_extra={"example": "ESP32-001"})
 
     @field_validator("bin_id", "device_id")
     @classmethod
@@ -225,17 +278,48 @@ async def root():
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
-    if PREDICTOR_LOADED:
+    checks = {
+        "model_loaded": PREDICTOR_LOADED,
+        "dataset_available": (Path(__file__).parent.parent / "data" / "raw" / "waste_dataset.csv").exists(),
+        "sqlite_writable": False,
+        "pdf_export_available": False,
+    }
+
+    try:
+        init_iot_db(DEFAULT_DB_PATH)
+        checks["sqlite_writable"] = True
+    except Exception as e:
+        checks["sqlite_error"] = str(e)
+
+    try:
+        export_predictions_to_pdf(
+            {"prediction_type": "health", "total_volume": 1.0, "average_daily": 1.0},
+            [{"date": "2025-01-01", "day_name": "Wednesday", "predicted_volume": 1.0}],
+        )
+        checks["pdf_export_available"] = True
+    except Exception as e:
+        checks["pdf_export_error"] = str(e)
+
+    healthy = all([
+        checks["model_loaded"],
+        checks["dataset_available"],
+        checks["sqlite_writable"],
+        checks["pdf_export_available"],
+    ])
+
+    if healthy:
         return {
             "status": "healthy",
             "model_loaded": True,
-            "message": "API is running and model is loaded"
+            "message": "API is running and production dependencies are available",
+            "checks": checks,
         }
     else:
         return {
             "status": "unhealthy",
-            "model_loaded": False,
-            "message": f"Model not loaded: {PREDICTOR_ERROR}"
+            "model_loaded": PREDICTOR_LOADED,
+            "message": f"Health check failed: {PREDICTOR_ERROR if not PREDICTOR_LOADED else 'one or more runtime checks failed'}",
+            "checks": checks,
         }
 
 

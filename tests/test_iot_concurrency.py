@@ -4,7 +4,7 @@ Concurrency test for IoT SQLite storage.
 Simulates many ESP32 devices posting readings at the same time and checks
 that no writes are lost or rejected with "database is locked".
 
-Run: python tests/test_iot_concurrency.py
+Run: python -m pytest tests/test_iot_concurrency.py
 """
 import sys
 import tempfile
@@ -35,7 +35,7 @@ def _write_batch(db_path: Path, device_index: int):
     return errors
 
 
-def main() -> int:
+def _run_concurrency_check() -> tuple[list[str], int]:
     # ignore_cleanup_errors: on Windows the WAL side files may stay briefly
     # locked after the last connection closes; that is harmless for the test.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -54,24 +54,37 @@ def main() -> int:
         stored = get_latest_readings(limit=EXPECTED_TOTAL + 10, db_path=db_path)
         stored_count = len(stored)
 
-        print(f"Devices            : {N_DEVICES}")
-        print(f"Per device         : {READINGS_PER_DEVICE}")
-        print(f"Expected writes    : {EXPECTED_TOTAL}")
-        print(f"Stored in database : {stored_count}")
-        print(f"Write errors       : {len(all_errors)}")
+    return all_errors, stored_count
 
-        ok = not all_errors and stored_count == EXPECTED_TOTAL
-        if ok:
-            print("\n[PASS] All concurrent writes succeeded with no lost rows.")
-            return 0
 
-        if all_errors:
-            print("\n[FAIL] Write errors occurred:")
-            for err in all_errors[:10]:
-                print(f"  - {err}")
-        if stored_count != EXPECTED_TOTAL:
-            print(f"\n[FAIL] Lost rows: expected {EXPECTED_TOTAL}, got {stored_count}.")
-        return 1
+def test_concurrent_iot_writes_are_not_lost():
+    all_errors, stored_count = _run_concurrency_check()
+
+    assert all_errors == []
+    assert stored_count == EXPECTED_TOTAL
+
+
+def main() -> int:
+    all_errors, stored_count = _run_concurrency_check()
+
+    print(f"Devices            : {N_DEVICES}")
+    print(f"Per device         : {READINGS_PER_DEVICE}")
+    print(f"Expected writes    : {EXPECTED_TOTAL}")
+    print(f"Stored in database : {stored_count}")
+    print(f"Write errors       : {len(all_errors)}")
+
+    ok = not all_errors and stored_count == EXPECTED_TOTAL
+    if ok:
+        print("\n[PASS] All concurrent writes succeeded with no lost rows.")
+        return 0
+
+    if all_errors:
+        print("\n[FAIL] Write errors occurred:")
+        for err in all_errors[:10]:
+            print(f"  - {err}")
+    if stored_count != EXPECTED_TOTAL:
+        print(f"\n[FAIL] Lost rows: expected {EXPECTED_TOTAL}, got {stored_count}.")
+    return 1
 
 
 if __name__ == "__main__":

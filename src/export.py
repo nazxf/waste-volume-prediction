@@ -5,6 +5,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
+import matplotlib
+
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
@@ -122,4 +125,3 @@ def save_prediction_exports(
     export_predictions_to_pdf(summary, daily_predictions, pdf_path)
 
     return excel_path, pdf_path
-

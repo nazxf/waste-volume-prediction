@@ -1,0 +1,17 @@
+.git
+.github
+.pytest_cache
+.pio
+__pycache__
+*.py[cod]
+venv
+.venv
+.env
+.env.local
+frontend/node_modules
+frontend/dist
+data/*.db
+data/*.db-shm
+data/*.db-wal
+logs/*.log
+run.md

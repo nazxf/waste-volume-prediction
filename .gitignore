@@ -39,6 +39,10 @@ ENV/
 
 # Models
 models/*.pkl
+!models/best_model.pkl
+!models/feature_columns.pkl
+!models/prediction_metadata.pkl
+!models/anomaly_detector.pkl
 
 # Processed data
 data/processed/
@@ -59,3 +63,6 @@ Thumbs.db
 *.log
 data/*.db-shm
 data/*.db-wal
+
+# Firmware build output
+.pio/
