@@ -4,12 +4,13 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { Sparkles, Truck, FileSpreadsheet, FileText, TriangleAlert, ShieldCheck } from "lucide-react";
+import { CheckCircle2, FileSpreadsheet, FileText, ShieldCheck, Sparkles, TriangleAlert, Truck } from "lucide-react";
 import {
   api,
   downloadExport,
@@ -20,7 +21,8 @@ import {
 import { fmt, fmtInt } from "../lib/format";
 import { Panel } from "../components/Panel";
 import { CapacityGauge } from "../components/CapacityGauge";
-import { ChartTooltip, CHART, axisProps } from "../components/chart";
+import { ChartTooltip, CHART, axisProps, referenceLineProps } from "../components/chart";
+import { Alert, Button, Field, MetricCard, Slider, TextInput, Toggle } from "../components/ui";
 
 const DEFAULTS: PredictionInput = {
   date: new Date().toISOString().slice(0, 10),
@@ -79,62 +81,65 @@ export default function Prediction() {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
-      {/* Input form */}
+    <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
       <div className="space-y-4">
+        <WorkflowSteps hasResult={Boolean(result)} loading={loading} />
         <Panel eyebrow="Parameter" title="Input Prediksi">
           <div className="space-y-5">
             <Field label="Tanggal">
-              <input
+              <TextInput
                 type="date"
                 value={input.date}
-                onChange={(e) => set("date", e.target.value)}
-                className="w-full rounded-sm border border-line bg-ink-900 px-3 py-2 text-sm text-text-hi focus:border-amber"
+                onChange={(event) => set("date", event.target.value)}
               />
             </Field>
 
-            <Slider label="Suhu" unit="°C" min={24} max={35} step={0.5} value={input.temperature} onChange={(v) => set("temperature", v)} />
-            <Slider label="Curah Hujan" unit="mm" min={0} max={120} step={1} value={input.rainfall} onChange={(v) => set("rainfall", v)} />
-            <Slider label="Kelembaban" unit="%" min={55} max={95} step={1} value={input.humidity} onChange={(v) => set("humidity", v)} />
-            <Slider label="Tingkat Event" unit="" min={0} max={5} step={1} value={input.event_level} onChange={(v) => set("event_level", v)} />
-
-            <Field label="Kepadatan Penduduk (jiwa/km²)">
-              <input
-                type="number"
-                min={3000}
-                max={15000}
-                step={100}
-                value={input.population_density}
-                onChange={(e) => set("population_density", Number(e.target.value))}
-                className="tnum w-full rounded-sm border border-line bg-ink-900 px-3 py-2 text-sm text-text-hi focus:border-amber"
-              />
-            </Field>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Toggle label="Hari Libur" value={input.holiday} onChange={(v) => set("holiday", v)} />
-              <Toggle label="Akhir Pekan" value={input.weekend} onChange={(v) => set("weekend", v)} />
+            <div className="space-y-4 rounded-md border border-line bg-surface-1 p-4">
+              <div className="text-sm font-semibold text-text-hi">Cuaca</div>
+              <Slider label="Suhu" unit="C" min={24} max={35} step={0.5} value={input.temperature} onChange={(value) => set("temperature", value)} />
+              <Slider label="Curah hujan" unit="mm" min={0} max={120} step={1} value={input.rainfall} onChange={(value) => set("rainfall", value)} />
+              <Slider label="Kelembaban" unit="%" min={55} max={95} step={1} value={input.humidity} onChange={(value) => set("humidity", value)} />
             </div>
 
-            <button
+            <div className="space-y-4 rounded-md border border-line bg-surface-1 p-4">
+              <div className="text-sm font-semibold text-text-hi">Kondisi kota</div>
+              <Slider label="Tingkat event" min={0} max={5} step={1} value={input.event_level} onChange={(value) => set("event_level", value)} />
+              <Field label="Kepadatan penduduk" hint="jiwa per km2">
+                <TextInput
+                  type="number"
+                  min={3000}
+                  max={15000}
+                  step={100}
+                  value={input.population_density}
+                  onChange={(event) => set("population_density", Number(event.target.value))}
+                  className="tnum"
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Toggle label="Hari libur" value={input.holiday === 1} onChange={(value) => set("holiday", value ? 1 : 0)} />
+                <Toggle label="Akhir pekan" value={input.weekend === 1} onChange={(value) => set("weekend", value ? 1 : 0)} />
+              </div>
+            </div>
+
+            <Button
               onClick={runPrediction}
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-sm bg-amber px-4 py-3 text-sm font-semibold text-ink-900 transition-colors hover:bg-amber-deep disabled:opacity-60"
+              loading={loading}
+              icon={Sparkles}
+              variant="primary"
+              className="w-full"
             >
-              <Sparkles size={16} />
-              {loading ? "Memproses…" : "Prediksi Sekarang"}
-            </button>
-            {error && <p className="text-xs" style={{ color: "var(--color-full)" }}>{error}</p>}
+              Prediksi sekarang
+            </Button>
+            {error && <p className="text-sm" style={{ color: "var(--color-full)" }}>{error}</p>}
           </div>
         </Panel>
       </div>
 
-      {/* Results */}
       <div className="space-y-6">
         {!result ? (
-          <Panel eyebrow="Hasil" title="Menunggu Prediksi">
+          <Panel eyebrow="Hasil" title="Menunggu prediksi">
             <p className="text-sm text-text-lo">
-              Atur parameter di kiri lalu jalankan prediksi. Hasil harian, mingguan, dan bulanan beserta rekomendasi
-              armada akan muncul di sini.
+              Atur parameter lalu jalankan prediksi. Hasil harian, mingguan, bulanan, dan rekomendasi armada akan tampil di sini.
             </p>
           </Panel>
         ) : (
@@ -154,73 +159,69 @@ function ResultView({
   result: Result;
   input: PredictionInput;
   exporting: string | null;
-  onExport: (h: "weekly" | "monthly", f: "excel" | "pdf") => void;
+  onExport: (horizon: "weekly" | "monthly", format: "excel" | "pdf") => void;
 }) {
   const { daily, weekly, monthly } = result;
   const fleet = daily.fleet_recommendation;
   const anomaly = daily.anomaly;
-
-  const breakdown = weekly.daily_predictions.map((d) => ({
-    label: `${d.day_name.slice(0, 3)} ${d.date.slice(8)}/${d.date.slice(5, 7)}`,
-    volume: d.predicted_volume,
+  const decisionTone = anomaly.is_anomaly || fleet.utilization_rate >= 95 ? "warning" : "success";
+  const decisionTitle =
+    decisionTone === "warning" ? "Review sebelum dispatch" : "Rencana siap digunakan";
+  const decisionMessage =
+    decisionTone === "warning"
+      ? "Prediksi memiliki sinyal risiko. Periksa input dan siapkan opsi armada cadangan."
+      : "Prediksi dan kapasitas armada berada dalam kondisi operasional yang layak.";
+  const breakdown = weekly.daily_predictions.map((day) => ({
+    label: `${day.day_name.slice(0, 3)} ${day.date.slice(8)}/${day.date.slice(5, 7)}`,
+    volume: day.predicted_volume,
   }));
-  const maxVol = Math.max(...breakdown.map((b) => b.volume));
+  const maxVol = Math.max(...breakdown.map((item) => item.volume));
+  const weeklyAverage = weekly.average_daily;
 
   return (
     <>
-      {/* Horizon cards + fleet gauge */}
+      <Panel eyebrow="Keputusan" title="Ringkasan dispatch">
+        <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
+          <Alert
+            tone={decisionTone}
+            icon={decisionTone === "warning" ? TriangleAlert : CheckCircle2}
+            title={decisionTitle}
+          >
+            <p>{decisionMessage}</p>
+            <p className="mt-2">
+              Gunakan <span className="tnum text-text-hi">{fleet.trucks_needed}</span> truk untuk estimasi{" "}
+              <span className="tnum text-text-hi">{fmt(daily.predicted_waste_volume)}</span> ton hari ini.
+            </p>
+          </Alert>
+          <div className="rounded-md border border-line bg-surface-1 p-4 text-sm">
+            <div className="text-xs font-medium text-text-lo">Rentang keyakinan</div>
+            <div className="tnum mt-2 text-xl font-semibold text-text-hi">
+              {fmt(daily.confidence_interval.lower_bound)}-{fmt(daily.confidence_interval.upper_bound)} ton
+            </div>
+            <p className="mt-2 text-text-mid">Margin {fmt(daily.confidence_interval.margin_of_error)} ton.</p>
+          </div>
+        </div>
+      </Panel>
+
       <div className="grid gap-4 md:grid-cols-3">
-        <HorizonCard
-          title="Harian"
-          total={daily.predicted_waste_volume}
-          ci={daily.confidence_interval}
-          accent
-        />
-        <HorizonCard
-          title="Mingguan · 7 hari"
-          total={weekly.total_volume}
-          avg={weekly.average_daily}
-          ci={weekly.confidence_interval}
-        />
-        <HorizonCard
-          title="Bulanan · 30 hari"
-          total={monthly.total_volume}
-          avg={monthly.average_daily}
-          ci={monthly.confidence_interval}
-        />
+        <HorizonCard title="Harian" total={daily.predicted_waste_volume} ci={daily.confidence_interval} accent />
+        <HorizonCard title="Mingguan, 7 hari" total={weekly.total_volume} avg={weekly.average_daily} ci={weekly.confidence_interval} />
+        <HorizonCard title="Bulanan, 30 hari" total={monthly.total_volume} avg={monthly.average_daily} ci={monthly.confidence_interval} />
       </div>
 
-      {/* Anomaly + Fleet */}
       <div className="grid gap-4 md:grid-cols-2">
-        <Panel eyebrow="Deteksi" title="Status Anomali">
-          <div
-            className="flex items-start gap-3 rounded-sm border p-4"
-            style={{
-              borderColor: anomaly.is_anomaly ? "var(--color-warn)40" : "var(--color-ok)40",
-              backgroundColor: anomaly.is_anomaly ? "var(--color-warn)14" : "var(--color-ok)10",
-            }}
+        <Panel eyebrow="Deteksi" title="Status anomali">
+          <Alert
+            tone={anomaly.is_anomaly ? "warning" : "success"}
+            icon={anomaly.is_anomaly ? TriangleAlert : ShieldCheck}
+            title={anomaly.is_anomaly ? "Input tidak biasa" : "Input normal"}
           >
-            {anomaly.is_anomaly ? (
-              <TriangleAlert size={20} style={{ color: "var(--color-warn)" }} className="mt-0.5 shrink-0" />
-            ) : (
-              <ShieldCheck size={20} style={{ color: "var(--color-ok)" }} className="mt-0.5 shrink-0" />
-            )}
-            <div>
-              <div
-                className="text-sm font-semibold"
-                style={{ color: anomaly.is_anomaly ? "var(--color-warn)" : "var(--color-ok)" }}
-              >
-                {anomaly.is_anomaly ? "Input Tidak Biasa" : "Input Normal"}
-              </div>
-              <p className="mt-1 text-xs text-text-mid">{anomaly.message}</p>
-              {anomaly.score !== null && (
-                <p className="tnum mt-1 text-xs text-text-lo">Skor: {anomaly.score}</p>
-              )}
-            </div>
-          </div>
+            <p>{anomaly.message}</p>
+            {anomaly.score !== null && <p className="tnum mt-1 text-xs text-text-lo">Skor: {anomaly.score}</p>}
+          </Alert>
         </Panel>
 
-        <Panel eyebrow="Logistik" title="Rekomendasi Armada">
+        <Panel eyebrow="Logistik" title="Rekomendasi armada">
           <div className="flex items-center gap-5">
             <CapacityGauge
               percent={fleet.utilization_rate}
@@ -245,18 +246,22 @@ function ResultView({
         </Panel>
       </div>
 
-      {/* Weekly breakdown */}
-      <Panel eyebrow="Rincian · 7 Hari" title="Prediksi Harian Mingguan">
+      <Panel eyebrow="Rincian, 7 hari" title="Prediksi harian mingguan">
         <div style={{ width: "100%", height: 300 }}>
           <ResponsiveContainer>
             <BarChart data={breakdown} margin={{ top: 16, right: 8, bottom: 0, left: -12 }}>
               <CartesianGrid stroke={CHART.grid} vertical={false} />
               <XAxis dataKey="label" {...axisProps} interval={0} angle={-12} textAnchor="end" height={50} />
               <YAxis {...axisProps} width={48} />
+              <ReferenceLine
+                y={weeklyAverage}
+                {...referenceLineProps}
+                label={{ value: "Rata-rata", fill: CHART.axis, fontSize: 11, position: "insideTopRight" }}
+              />
               <Tooltip content={<ChartTooltip unit=" ton" />} cursor={{ fill: "#ffffff08" }} />
-              <Bar dataKey="volume" name="Volume" radius={[2, 2, 0, 0]}>
-                {breakdown.map((b, i) => (
-                  <Cell key={i} fill={b.volume === maxVol ? CHART.amber : "#3a4b54"} />
+              <Bar dataKey="volume" name="Volume" radius={[3, 3, 0, 0]}>
+                {breakdown.map((item, index) => (
+                  <Cell key={index} fill={item.volume === maxVol ? CHART.primary : CHART.neutral} />
                 ))}
               </Bar>
             </BarChart>
@@ -264,13 +269,12 @@ function ResultView({
         </div>
       </Panel>
 
-      {/* Export */}
-      <Panel eyebrow="Unduh" title="Export Prediksi">
+      <Panel eyebrow="Unduh" title="Export prediksi">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <ExportButton icon={FileSpreadsheet} label="Mingguan · Excel" busy={exporting === "weekly-excel"} onClick={() => onExport("weekly", "excel")} />
-          <ExportButton icon={FileText} label="Mingguan · PDF" busy={exporting === "weekly-pdf"} onClick={() => onExport("weekly", "pdf")} />
-          <ExportButton icon={FileSpreadsheet} label="Bulanan · Excel" busy={exporting === "monthly-excel"} onClick={() => onExport("monthly", "excel")} />
-          <ExportButton icon={FileText} label="Bulanan · PDF" busy={exporting === "monthly-pdf"} onClick={() => onExport("monthly", "pdf")} />
+          <ExportButton icon={FileSpreadsheet} label="Mingguan Excel" busy={exporting === "weekly-excel"} onClick={() => onExport("weekly", "excel")} />
+          <ExportButton icon={FileText} label="Mingguan PDF" busy={exporting === "weekly-pdf"} onClick={() => onExport("weekly", "pdf")} />
+          <ExportButton icon={FileSpreadsheet} label="Bulanan Excel" busy={exporting === "monthly-excel"} onClick={() => onExport("monthly", "excel")} />
+          <ExportButton icon={FileText} label="Bulanan PDF" busy={exporting === "monthly-pdf"} onClick={() => onExport("monthly", "pdf")} />
         </div>
         <p className="mt-3 text-xs text-text-lo">Untuk tanggal mulai {input.date}.</p>
       </Panel>
@@ -278,78 +282,33 @@ function ResultView({
   );
 }
 
-/* ---------- small form + result building blocks ---------- */
+function WorkflowSteps({ hasResult, loading }: { hasResult: boolean; loading: boolean }) {
+  const steps = [
+    { label: "Input parameter", done: true },
+    { label: "Jalankan prediksi", done: hasResult || loading },
+    { label: "Review rekomendasi", done: hasResult },
+    { label: "Export laporan", done: false },
+  ];
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
-      <span className="eyebrow mb-1.5 block">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function Slider({
-  label,
-  unit,
-  min,
-  max,
-  step,
-  value,
-  onChange,
-}: {
-  label: string;
-  unit: string;
-  min: number;
-  max: number;
-  step: number;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="eyebrow">{label}</span>
-        <span className="tnum text-sm text-text-hi">
-          {value}
-          <span className="ml-0.5 text-text-lo">{unit}</span>
-        </span>
+    <Panel eyebrow="Workflow" title="Alur prediksi">
+      <div className="space-y-2">
+        {steps.map((step, index) => (
+          <div key={step.label} className="flex items-center gap-3 rounded-md border border-line bg-surface-1 px-3 py-2">
+            <span
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-full border text-xs font-semibold"
+              style={{
+                borderColor: step.done ? "var(--color-ok)" : "var(--color-line-bright)",
+                color: step.done ? "var(--color-ok)" : "var(--color-text-lo)",
+              }}
+            >
+              {step.done ? <CheckCircle2 size={14} /> : index + 1}
+            </span>
+            <span className={step.done ? "text-sm text-text-hi" : "text-sm text-text-mid"}>{step.label}</span>
+          </div>
+        ))}
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-amber"
-      />
-    </div>
-  );
-}
-
-function Toggle({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
-  const on = value === 1;
-  return (
-    <div>
-      <span className="eyebrow mb-1.5 block">{label}</span>
-      <button
-        type="button"
-        onClick={() => onChange(on ? 0 : 1)}
-        className="flex w-full items-center justify-between rounded-sm border border-line bg-ink-900 px-3 py-2 text-sm transition-colors hover:border-line-bright"
-      >
-        <span className={on ? "text-amber" : "text-text-lo"}>{on ? "Ya" : "Tidak"}</span>
-        <span
-          className="relative h-4 w-7 rounded-full transition-colors"
-          style={{ backgroundColor: on ? "var(--color-amber)" : "var(--color-line-bright)" }}
-        >
-          <span
-            className="absolute top-0.5 h-3 w-3 rounded-full bg-ink-900 transition-all"
-            style={{ left: on ? "0.875rem" : "0.125rem" }}
-          />
-        </span>
-      </button>
-    </div>
+    </Panel>
   );
 }
 
@@ -367,26 +326,23 @@ function HorizonCard({
   accent?: boolean;
 }) {
   return (
-    <div className="panel relative overflow-hidden p-5">
-      <div
-        className="absolute left-0 top-0 h-full w-[3px]"
-        style={{ backgroundColor: accent ? "var(--color-amber)" : "var(--color-line-bright)" }}
-      />
-      <div className="eyebrow">{title}</div>
-      <div className="tnum mt-2 font-display text-3xl font-semibold text-text-hi">
-        {fmt(total)}
-        <span className="ml-1 text-sm font-normal text-text-lo">ton</span>
-      </div>
-      {avg !== undefined && <p className="tnum mt-1 text-xs text-text-lo">Rata-rata {fmt(avg)} ton/hari</p>}
-      <p className="tnum mt-2 text-xs text-text-mid">
-        95% CI {fmt(ci.lower_bound)}–{fmt(ci.upper_bound)}
-      </p>
-    </div>
+    <MetricCard
+      label={title}
+      value={fmt(total)}
+      unit="ton"
+      accent={accent}
+      helper={
+        <div className="space-y-1">
+          {avg !== undefined && <p className="tnum">Rata-rata {fmt(avg)} ton/hari</p>}
+          <p className="tnum">95% CI {fmt(ci.lower_bound)}-{fmt(ci.upper_bound)}</p>
+        </div>
+      }
+    />
   );
 }
 
 function ExportButton({
-  icon: Icon,
+  icon,
   label,
   busy,
   onClick,
@@ -397,13 +353,8 @@ function ExportButton({
   onClick: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={busy}
-      className="flex items-center justify-center gap-2 rounded-sm border border-line-bright px-3 py-2.5 text-xs font-medium text-text-hi transition-colors hover:bg-ink-700 disabled:opacity-60"
-    >
-      <Icon size={15} className="text-amber" />
-      {busy ? "Mengunduh…" : label}
-    </button>
+    <Button onClick={onClick} loading={busy} icon={icon} className="w-full">
+      {label}
+    </Button>
   );
 }

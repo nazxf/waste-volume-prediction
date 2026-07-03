@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
+  Gauge,
+  Info,
   LayoutDashboard,
   LineChart,
   Sparkles,
   Trash2,
-  Gauge,
-  Info,
   Truck,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -22,27 +22,31 @@ const NAV = [
 
 function useClock() {
   const [now, setNow] = useState(new Date());
+
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
   return now;
 }
 
 function useHealth() {
   const [ok, setOk] = useState<boolean | null>(null);
   const [modelLoaded, setModelLoaded] = useState(false);
+
   useEffect(() => {
     let alive = true;
     const ping = () =>
       api
         .health()
-        .then((h) => {
+        .then((health) => {
           if (!alive) return;
           setOk(true);
-          setModelLoaded(h.model_loaded);
+          setModelLoaded(health.model_loaded);
         })
         .catch(() => alive && setOk(false));
+
     ping();
     const id = setInterval(ping, 15000);
     return () => {
@@ -50,6 +54,7 @@ function useHealth() {
       clearInterval(id);
     };
   }, []);
+
   return { ok, modelLoaded };
 }
 
@@ -57,22 +62,23 @@ export default function Layout() {
   const now = useClock();
   const { ok, modelLoaded } = useHealth();
   const location = useLocation();
-  const active = NAV.find((n) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)));
+  const active = NAV.find((item) =>
+    item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
+  );
 
   const statusColor = ok === null ? "var(--color-text-lo)" : ok ? "var(--color-ok)" : "var(--color-full)";
-  const statusText = ok === null ? "MENGHUBUNGKAN" : ok ? "TERHUBUNG" : "TERPUTUS";
+  const statusText = ok === null ? "Menghubungkan" : ok ? "Terhubung" : "Terputus";
 
   return (
-    <div className="relative z-10 flex min-h-screen">
-      {/* Left rail */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-line bg-ink-800/80 backdrop-blur md:flex">
+    <div className="relative z-10 flex min-h-screen bg-ink-950">
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-line bg-surface-2 md:flex">
         <div className="flex items-center gap-3 border-b border-line px-5 py-5">
-          <div className="grid h-9 w-9 place-items-center rounded-sm bg-amber text-ink-900">
+          <div className="grid h-9 w-9 place-items-center rounded-md bg-amber text-ink-950">
             <Truck size={18} strokeWidth={2.4} />
           </div>
           <div className="leading-tight">
-            <div className="font-display text-sm font-bold tracking-tight text-text-hi">DISPATCH</div>
-            <div className="eyebrow !text-[0.6rem]">Waste Ops Console</div>
+            <div className="text-sm font-bold text-text-hi">DISPATCH</div>
+            <div className="mt-0.5 text-xs text-text-lo">Waste Ops Console</div>
           </div>
         </div>
 
@@ -86,20 +92,16 @@ export default function Layout() {
                 end={item.end}
                 className={({ isActive }) =>
                   [
-                    "group relative flex items-center gap-3 rounded-sm px-3 py-2.5 text-sm transition-colors",
+                    "group flex items-center gap-3 rounded-md border px-3 py-2.5 text-sm transition-colors",
                     isActive
-                      ? "bg-ink-600 text-text-hi"
-                      : "text-text-mid hover:bg-ink-700 hover:text-text-hi",
+                      ? "border-line-bright bg-surface-3 text-text-hi"
+                      : "border-transparent text-text-mid hover:bg-surface-3 hover:text-text-hi",
                   ].join(" ")
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span
-                      className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-amber transition-opacity"
-                      style={{ opacity: isActive ? 1 : 0 }}
-                    />
-                    <Icon size={17} strokeWidth={2} className={isActive ? "text-amber" : ""} />
+                    <Icon size={17} strokeWidth={2} className={isActive ? "text-amber" : "text-text-lo"} />
                     <span className="flex-1 font-medium">{item.label}</span>
                     <span className="tnum text-[0.65rem] text-text-lo">{item.code}</span>
                   </>
@@ -112,17 +114,11 @@ export default function Layout() {
         <div className="border-t border-line p-4">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
-              {ok && (
-                <span
-                  className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60"
-                  style={{ backgroundColor: statusColor }}
-                />
-              )}
               <span className="relative inline-flex h-2 w-2 rounded-full" style={{ backgroundColor: statusColor }} />
             </span>
-            <span className="eyebrow" style={{ color: statusColor }}>{statusText}</span>
+            <span className="text-xs font-semibold" style={{ color: statusColor }}>{statusText}</span>
           </div>
-          <p className="mt-2 text-[0.7rem] text-text-lo">
+          <p className="mt-2 text-xs text-text-lo">
             Model ML:{" "}
             <span style={{ color: modelLoaded ? "var(--color-ok)" : "var(--color-warn)" }}>
               {modelLoaded ? "aktif" : "belum dimuat"}
@@ -131,14 +127,12 @@ export default function Layout() {
         </div>
       </aside>
 
-      {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top status bar */}
-        <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-line bg-ink-900/85 px-5 py-3 backdrop-blur md:px-8">
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-line bg-ink-950/90 px-5 py-3 backdrop-blur md:px-8">
           <div className="flex items-center gap-3">
-            <span className="eyebrow hidden sm:inline">{active?.code ?? "—"}</span>
+            <span className="tnum hidden text-xs text-text-lo sm:inline">{active?.code ?? "--"}</span>
             <span className="hidden h-4 w-px bg-line sm:inline-block" />
-            <h1 className="font-display text-base font-semibold text-text-hi sm:text-lg">
+            <h1 className="text-base font-semibold text-text-hi sm:text-lg">
               {active?.label ?? "Dashboard"}
             </h1>
           </div>
@@ -147,19 +141,15 @@ export default function Layout() {
               <div className="tnum text-sm text-text-hi">
                 {now.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </div>
-              <div className="eyebrow !text-[0.6rem]">
+              <div className="text-xs text-text-lo">
                 {now.toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "short" })}
               </div>
             </div>
-            <span
-              className="grid h-2.5 w-2.5 place-items-center rounded-full md:hidden"
-              style={{ backgroundColor: statusColor }}
-            />
+            <span className="grid h-2.5 w-2.5 place-items-center rounded-full md:hidden" style={{ backgroundColor: statusColor }} />
           </div>
         </header>
 
-        {/* Mobile nav */}
-        <nav className="flex gap-1 overflow-x-auto border-b border-line bg-ink-800 px-3 py-2 md:hidden">
+        <nav className="flex gap-1 overflow-x-auto border-b border-line bg-surface-2 px-3 py-2 md:hidden">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
@@ -167,8 +157,8 @@ export default function Layout() {
               end={item.end}
               className={({ isActive }) =>
                 [
-                  "whitespace-nowrap rounded-sm px-3 py-1.5 text-xs font-medium",
-                  isActive ? "bg-amber text-ink-900" : "text-text-mid",
+                  "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium",
+                  isActive ? "bg-amber text-ink-950" : "text-text-mid",
                 ].join(" ")
               }
             >
@@ -181,9 +171,8 @@ export default function Layout() {
           <Outlet />
         </main>
 
-        <footer className="border-t border-line px-5 py-4 text-[0.7rem] text-text-lo md:px-8">
-          <span className="tnum">© {new Date().getFullYear()}</span> Sistem Prediksi Volume Sampah ·
-          Antarmuka React berdampingan dengan dashboard Streamlit.
+        <footer className="border-t border-line px-5 py-4 text-xs text-text-lo md:px-8">
+          <span className="tnum">Copyright {new Date().getFullYear()}</span> Sistem Prediksi Volume Sampah.
         </footer>
       </div>
     </div>

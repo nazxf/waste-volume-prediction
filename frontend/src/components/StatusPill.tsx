@@ -6,7 +6,7 @@ export function StatusPill({ status, size = "md" }: { status: FillStatus; size?:
   const pad = size === "sm" ? "px-2 py-0.5 text-[0.65rem]" : "px-2.5 py-1 text-xs";
   return (
     <span
-      className={`tnum inline-flex items-center gap-1.5 rounded-sm font-medium tracking-wide ${pad}`}
+      className={`inline-flex items-center gap-1.5 rounded-md font-medium ${pad}`}
       style={{ color, backgroundColor: `${color}1f`, border: `1px solid ${color}40` }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />

@@ -14,7 +14,7 @@ const DRIVERS = [
   { icon: CloudRain, label: "Cuaca", desc: "Suhu, curah hujan, kelembaban" },
   { icon: CalendarDays, label: "Kalender", desc: "Hari kerja, akhir pekan, libur" },
   { icon: Users, label: "Penduduk", desc: "Kepadatan per km²" },
-  { icon: PartyPopper, label: "Event", desc: "Tingkat kegiatan khusus (0–5)" },
+  { icon: PartyPopper, label: "Event", desc: "Tingkat kegiatan khusus (0-5)" },
 ];
 
 const BENEFITS = [
@@ -38,12 +38,12 @@ export default function About() {
     <div className="space-y-6">
       <section className="panel rise p-6 md:p-8">
         <div className="eyebrow">Latar Belakang</div>
-        <h2 className="mt-3 max-w-2xl font-display text-2xl font-semibold leading-snug text-text-hi">
+        <h2 className="mt-3 max-w-2xl text-2xl font-semibold leading-snug text-text-hi">
           Mengubah volume sampah yang fluktuatif menjadi rencana pengangkutan yang pasti.
         </h2>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-text-mid">
           Volume sampah harian sangat bervariasi tergantung cuaca, kalender, kepadatan penduduk, dan event kota.
-          Sistem ini memakai Machine Learning untuk memprediksi volume harian, mingguan, dan bulanan — lalu
+          Sistem ini memakai Machine Learning untuk memprediksi volume harian, mingguan, dan bulanan, lalu
           menerjemahkannya menjadi rekomendasi armada agar pengangkutan tidak berlebih maupun kurang.
         </p>
       </section>
@@ -55,7 +55,7 @@ export default function About() {
             return (
               <div key={d.label} className="rounded-sm border border-line bg-ink-900/50 p-4">
                 <Icon size={20} className="text-amber" />
-                <div className="mt-3 font-display text-sm font-semibold text-text-hi">{d.label}</div>
+                <div className="mt-3 text-sm font-semibold text-text-hi">{d.label}</div>
                 <p className="mt-1 text-xs text-text-lo">{d.desc}</p>
               </div>
             );

@@ -4,19 +4,21 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { Truck, ArrowRight } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, Truck } from "lucide-react";
 import { api, type PredictionInput } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { fmt, fmtInt } from "../lib/format";
 import { Panel, StatReadout } from "../components/Panel";
 import { CapacityGauge } from "../components/CapacityGauge";
-import { ChartTooltip, CHART, axisProps } from "../components/chart";
+import { ChartTooltip, CHART, axisProps, referenceLineProps } from "../components/chart";
 import { Loading, ErrorState } from "../components/states";
+import { MetricCard } from "../components/ui";
 
 export default function Dashboard() {
   const overview = useAsync(() => api.overview(90), []);
@@ -40,68 +42,98 @@ export default function Dashboard() {
   }, [quickInput]);
 
   if (overview.loading) return <Loading />;
-  if (overview.error || !overview.data)
+  if (overview.error || !overview.data) {
     return <ErrorState message={overview.error ?? "Data tidak tersedia"} onRetry={overview.reload} />;
+  }
 
-  const o = overview.data;
+  const data = overview.data;
   const daily = quick.data?.daily;
   const fleet = daily?.fleet_recommendation;
+  const delta = daily ? daily.predicted_waste_volume - data.average_daily : null;
+  const utilization = fleet?.utilization_rate ?? 0;
+  const risk =
+    !daily || !fleet
+      ? null
+      : daily.anomaly.is_anomaly || utilization >= 95
+        ? {
+            label: "Butuh perhatian",
+            tone: "warning",
+            color: "var(--color-warn)",
+            summary: "Volume atau utilisasi armada mendekati batas operasional.",
+          }
+        : {
+            label: "Terkendali",
+            tone: "success",
+            color: "var(--color-ok)",
+            summary: "Prediksi hari ini masih berada dalam kapasitas armada.",
+          };
+  const actionItems = [
+    fleet ? `Siapkan ${fleet.trucks_needed} truk untuk rute hari ini.` : "Menunggu prediksi armada.",
+    utilization >= 90 ? "Cadangkan armada tambahan sebelum jam puncak." : "Gunakan rencana armada normal.",
+    daily?.anomaly.is_anomaly ? "Review input karena pola terdeteksi tidak biasa." : "Lanjutkan monitoring kondisi kota.",
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Hero: the city's daily load, framed as a live gauge */}
-      <section className="panel rise relative overflow-hidden p-6 md:p-8">
-        <div className="grid gap-8 md:grid-cols-[1fr_auto] md:items-center">
+      <section className="panel rise p-6">
+        <div className="grid gap-6 xl:grid-cols-[1fr_300px] xl:items-center">
           <div>
-            <div className="eyebrow">Beban Harian Kota · Prediksi Hari Ini</div>
-            <div className="mt-3 flex flex-wrap items-end gap-x-4 gap-y-1">
-              <span className="tnum font-display text-6xl font-bold leading-none text-text-hi md:text-7xl">
-                {daily ? fmt(daily.predicted_waste_volume) : "—"}
-              </span>
-              <span className="pb-1 text-xl text-text-lo">ton</span>
-            </div>
-            {daily && (
-              <p className="mt-3 max-w-md text-sm text-text-mid">
-                Selisih{" "}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-xs font-medium text-text-lo">Ringkasan operasional hari ini</div>
+              {risk && (
                 <span
-                  className="tnum"
-                  style={{
-                    color:
-                      daily.predicted_waste_volume >= o.average_daily
-                        ? "var(--color-high)"
-                        : "var(--color-ok)",
-                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
+                  style={{ borderColor: `${risk.color}66`, color: risk.color }}
                 >
-                  {fmt(daily.predicted_waste_volume - o.average_daily)} ton
-                </span>{" "}
-                dari rata-rata historis {fmt(o.average_daily)} ton/hari. Selang 95%:{" "}
-                <span className="tnum text-text-hi">
-                  {fmt(daily.confidence_interval.lower_bound)}–{fmt(daily.confidence_interval.upper_bound)}
-                </span>{" "}
-                ton.
-              </p>
-            )}
-            {fleet && (
-              <div className="mt-5 inline-flex items-center gap-3 rounded-sm border border-line bg-ink-900/60 px-4 py-2.5">
-                <Truck size={18} className="text-amber" />
-                <span className="text-sm text-text-mid">
-                  Rekomendasi armada{" "}
-                  <span className="tnum font-semibold text-text-hi">{fleet.trucks_needed} truk</span> · utilisasi{" "}
-                  <span className="tnum text-text-hi">{fmt(fleet.utilization_rate)}%</span>
+                  {risk.tone === "warning" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
+                  {risk.label}
                 </span>
-              </div>
-            )}
+              )}
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <MetricCard
+                label="Volume hari ini"
+                value={daily ? fmt(daily.predicted_waste_volume) : "--"}
+                unit="ton"
+                accent
+                helper={
+                  daily && delta !== null
+                    ? `${delta >= 0 ? "Di atas" : "Di bawah"} rata-rata ${fmt(Math.abs(delta))} ton`
+                    : "Mengambil prediksi"
+                }
+              />
+              <MetricCard
+                label="Armada"
+                value={fleet ? fmtInt(fleet.trucks_needed) : "--"}
+                unit="truk"
+                helper={fleet ? `Utilisasi ${fmt(fleet.utilization_rate)}%` : "Belum tersedia"}
+              />
+              <MetricCard
+                label="Horizon 7 hari"
+                value={quick.data?.weekly ? fmt(quick.data.weekly.total_volume) : "--"}
+                unit="ton"
+                helper={quick.data?.weekly ? `Rata-rata ${fmt(quick.data.weekly.average_daily)} ton/hari` : "Menghitung"}
+              />
+            </div>
+            {risk && <p className="mt-4 max-w-2xl text-sm text-text-mid">{risk.summary}</p>}
+            <div className="mt-5 grid gap-2 text-sm text-text-mid md:grid-cols-3">
+              {actionItems.map((item, index) => (
+                <div key={item} className="rounded-md border border-line bg-surface-1 p-3">
+                  <div className="mb-1 text-xs font-medium text-text-lo">Tindakan {index + 1}</div>
+                  {item}
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Signature gauge: predicted load vs today's fleet capacity */}
           {daily && fleet && (
-            <div className="md:pl-8 md:[border-left:1px_solid_var(--color-line)]">
+            <div className="rounded-md border border-line bg-surface-1 p-4">
               <CapacityGauge
                 percent={fleet.utilization_rate}
                 readout={fmt(fleet.utilization_rate, 0)}
                 unit="%"
                 color={CHART.amber}
-                height={200}
+                height={180}
                 caption={`${fmt(daily.predicted_waste_volume)} ton dari kapasitas ${fmtInt(fleet.total_capacity)} ton`}
               />
             </div>
@@ -109,81 +141,99 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* Headline stats */}
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <Panel
+          eyebrow="Historis, 90 hari terakhir"
+          title="Tren volume sampah"
+          action={
+            <Link to="/prediksi" className="inline-flex items-center gap-1.5 text-sm font-medium text-amber hover:underline">
+              Buat prediksi <ArrowRight size={14} />
+            </Link>
+          }
+        >
+          <div style={{ width: "100%", height: 320 }}>
+            <ResponsiveContainer>
+              <AreaChart data={data.trend} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                <defs>
+                  <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={CHART.amber} stopOpacity={0.26} />
+                    <stop offset="100%" stopColor={CHART.amber} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke={CHART.grid} vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  {...axisProps}
+                  minTickGap={48}
+                  tickFormatter={(date: string) => date.slice(5)}
+                />
+                <YAxis {...axisProps} width={48} />
+                <ReferenceLine
+                  y={data.average_daily}
+                  {...referenceLineProps}
+                  label={{ value: "Rata-rata", fill: CHART.axis, fontSize: 11, position: "insideTopRight" }}
+                />
+                <Tooltip content={<ChartTooltip unit=" ton" />} cursor={{ stroke: CHART.amber, strokeOpacity: 0.4 }} />
+                <Area
+                  type="monotone"
+                  dataKey="waste_volume"
+                  name="Volume"
+                  stroke={CHART.amber}
+                  strokeWidth={2}
+                  fill="url(#trendFill)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Panel>
+
+        <Panel eyebrow="Rencana" title="Kapasitas dan jadwal">
+          <div className="space-y-3 text-sm">
+            <div className="flex items-start gap-3 rounded-md border border-line bg-surface-1 p-3">
+              <Truck size={17} className="mt-0.5 text-amber" />
+              <div>
+                <div className="font-medium text-text-hi">Dispatch armada</div>
+                <p className="mt-1 text-text-mid">
+                  {fleet ? `${fleet.trucks_needed} truk, kapasitas total ${fmtInt(fleet.total_capacity)} ton.` : "Menunggu hasil prediksi."}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 rounded-md border border-line bg-surface-1 p-3">
+              <CalendarDays size={17} className="mt-0.5 text-amber" />
+              <div>
+                <div className="font-medium text-text-hi">Periode data</div>
+                <p className="mt-1 text-text-mid">
+                  {data.date_start} sampai {data.date_end}, total {fmtInt(data.total_days)} hari.
+                </p>
+              </div>
+            </div>
+          </div>
+        </Panel>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatReadout label="Rata-rata Harian" value={fmt(o.average_daily)} unit="ton" accent />
-        <StatReadout label="Volume Maksimum" value={fmt(o.max_volume)} unit="ton" />
-        <StatReadout label="Volume Minimum" value={fmt(o.min_volume)} unit="ton" />
-        <StatReadout label="Total Hari Tercatat" value={fmtInt(o.total_days)} unit="hari" />
+        <StatReadout label="Rata-rata harian" value={fmt(data.average_daily)} unit="ton" accent />
+        <StatReadout label="Volume maksimum" value={fmt(data.max_volume)} unit="ton" />
+        <StatReadout label="Volume minimum" value={fmt(data.min_volume)} unit="ton" />
+        <StatReadout label="Total hari tercatat" value={fmtInt(data.total_days)} unit="hari" />
       </div>
 
-      {/* Quick horizon forecasts */}
       <div className="grid gap-4 md:grid-cols-3">
-        <ForecastCard label="Hari Ini" value={daily?.predicted_waste_volume} loading={quick.loading} />
-        <ForecastCard label="7 Hari" value={quick.data?.weekly.total_volume} loading={quick.loading} />
-        <ForecastCard label="30 Hari" value={quick.data?.monthly.total_volume} loading={quick.loading} />
+        <ForecastCard label="Hari ini" value={daily?.predicted_waste_volume} loading={quick.loading} />
+        <ForecastCard label="7 hari" value={quick.data?.weekly.total_volume} loading={quick.loading} />
+        <ForecastCard label="30 hari" value={quick.data?.monthly.total_volume} loading={quick.loading} />
       </div>
 
-      {/* Trend */}
-      <Panel
-        eyebrow="Historis · 90 Hari Terakhir"
-        title="Tren Volume Sampah"
-        action={
-          <Link
-            to="/prediksi"
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-amber hover:underline"
-          >
-            Buat prediksi <ArrowRight size={14} />
-          </Link>
-        }
-      >
-        <div style={{ width: "100%", height: 320 }}>
-          <ResponsiveContainer>
-            <AreaChart data={o.trend} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-              <defs>
-                <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={CHART.amber} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={CHART.amber} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke={CHART.grid} vertical={false} />
-              <XAxis
-                dataKey="date"
-                {...axisProps}
-                minTickGap={48}
-                tickFormatter={(d: string) => d.slice(5)}
-              />
-              <YAxis {...axisProps} width={48} />
-              <Tooltip
-                content={<ChartTooltip unit=" ton" />}
-                cursor={{ stroke: CHART.amber, strokeOpacity: 0.4 }}
-              />
-              <Area
-                type="monotone"
-                dataKey="waste_volume"
-                name="Volume"
-                stroke={CHART.amber}
-                strokeWidth={2}
-                fill="url(#trendFill)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </Panel>
     </div>
   );
 }
 
 function ForecastCard({ label, value, loading }: { label: string; value?: number; loading: boolean }) {
   return (
-    <div className="panel flex items-center justify-between p-5">
-      <div>
-        <div className="eyebrow">Prediksi · {label}</div>
-        <div className="tnum mt-2 font-display text-2xl font-semibold text-text-hi">
-          {loading ? "···" : value !== undefined ? fmt(value) : "—"}
-          <span className="ml-1 text-sm font-normal text-text-lo">ton</span>
-        </div>
-      </div>
-    </div>
+    <MetricCard
+      label={`Prediksi, ${label}`}
+      value={loading ? "..." : value !== undefined ? fmt(value) : "--"}
+      unit="ton"
+    />
   );
 }

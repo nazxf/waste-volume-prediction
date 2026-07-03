@@ -1,40 +1,41 @@
 @import "tailwindcss";
 
 /* ============================================================
-   Dispatch Board — design tokens
-   A municipal sanitation depot console: slate-teal ink, amber
-   signal accent, and fill-status colors used semantically.
+   Waste operations dashboard design tokens.
+   Restrained product UI with semantic status colors.
    ============================================================ */
 @theme {
-  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  /* Surfaces — deep slate-teal, never pure black */
-  --color-ink-900: #0e1417;
-  --color-ink-800: #131c21;
-  --color-ink-700: #18242a;
-  --color-ink-600: #1e2c33;
-  --color-line: #2a363d;
-  --color-line-bright: #3a4b54;
+  /* Tinted dark neutrals, never pure black */
+  --color-ink-950: #0b1113;
+  --color-ink-900: #101719;
+  --color-ink-800: #151d20;
+  --color-ink-700: #1b2529;
+  --color-ink-600: #253137;
+  --color-surface-1: #11191c;
+  --color-surface-2: #172125;
+  --color-surface-3: #1f2b30;
+  --color-line: #26343a;
+  --color-line-bright: #394a52;
 
-  /* Text */
-  --color-text-hi: #eef3f1;
-  --color-text-mid: #a7b8bd;
-  --color-text-lo: #6e8087;
+  --color-text-hi: #edf3f1;
+  --color-text-mid: #aab8bc;
+  --color-text-lo: #718187;
 
-  /* Brand signal — dump-truck amber */
   --color-amber: #f2a33c;
   --color-amber-deep: #c97a1e;
   --color-amber-ghost: #3a2a14;
 
-  /* Fill-status semantics (low/medium/high/full) */
+  --color-info: #5aa9e6;
   --color-ok: #3fb98c;
   --color-warn: #f2c14e;
   --color-high: #f08a3c;
   --color-full: #e5564e;
 
-  --radius-panel: 4px;
+  --radius-panel: 6px;
 }
 
 @layer base {
@@ -48,7 +49,7 @@
 
   body {
     margin: 0;
-    background-color: var(--color-ink-900);
+    background-color: var(--color-ink-950);
     color: var(--color-text-hi);
     font-family: var(--font-sans);
     font-feature-settings: "cv05", "ss01";
@@ -56,85 +57,81 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Faint engineering grid behind the whole console */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
-    background-image:
-      linear-gradient(var(--color-line) 1px, transparent 1px),
-      linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
-    background-size: 64px 64px;
-    opacity: 0.16;
-    mask-image: radial-gradient(circle at 30% 0%, black, transparent 80%);
+    background: linear-gradient(180deg, rgba(242, 163, 60, 0.035), transparent 220px);
     z-index: 0;
   }
 
-  h1, h2, h3, h4 {
-    font-family: var(--font-display);
+  h1,
+  h2,
+  h3,
+  h4 {
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
   }
 
   :focus-visible {
     outline: 2px solid var(--color-amber);
     outline-offset: 2px;
-    border-radius: 2px;
+    border-radius: 4px;
   }
 
   ::selection {
     background: var(--color-amber);
-    color: var(--color-ink-900);
+    color: var(--color-ink-950);
   }
 
-  /* Slim console scrollbars */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
+
   ::-webkit-scrollbar-track {
-    background: var(--color-ink-900);
+    background: var(--color-ink-950);
   }
+
   ::-webkit-scrollbar-thumb {
     background: var(--color-ink-600);
-    border: 2px solid var(--color-ink-900);
+    border: 2px solid var(--color-ink-950);
     border-radius: 6px;
   }
+
   ::-webkit-scrollbar-thumb:hover {
     background: var(--color-line-bright);
   }
 }
 
 @layer components {
-  /* Mono uppercase label — the console's voice for structure */
   .eyebrow {
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: 0.6875rem;
-    font-weight: 500;
-    letter-spacing: 0.18em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--color-text-lo);
   }
 
   .panel {
-    background-color: var(--color-ink-800);
+    background-color: var(--color-surface-2);
     border: 1px solid var(--color-line);
     border-radius: var(--radius-panel);
+    box-shadow: 0 1px 0 rgba(237, 243, 241, 0.03);
   }
 
-  /* Numeric telemetry readouts */
   .tnum {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 }
 
-/* Motion — restrained, orchestrated on load */
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -143,7 +140,7 @@
 }
 
 .rise {
-  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes sweep {

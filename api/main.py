@@ -1,689 +1,87 @@
 """
-FastAPI REST API for Waste Volume Prediction System
-Provides endpoints for daily, weekly, and monthly predictions
+FastAPI REST API for Waste Volume Prediction System.
+
+Run with: uvicorn api.main:app --reload
 """
-import logging
-import os
-import sys
-import time
-from collections import defaultdict, deque
 from pathlib import Path
-from io import BytesIO
+import sys
 
-# Add src to path
-sys.path.append(str(Path(__file__).parent.parent / "src"))
+if __package__ in {None, ""}:
+    sys.path.append(str(Path(__file__).parent.parent))
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Any, Dict, List, Optional, Union
-from datetime import datetime
-from iot_storage import DEFAULT_DB_PATH, get_latest_bin_reading, get_latest_readings, init_iot_db, save_bin_reading
-from dataset_stats import (
-    DatasetNotFoundError,
-    get_analysis as get_dataset_analysis,
-    get_overview as get_dataset_overview,
-)
-from model_report import (
-    FEATURE_IMPORTANCE_IMG,
-    PREDICTION_COMPARISON_IMG,
-    get_model_performance,
-)
+from fastapi.responses import JSONResponse
+
+from api.config import configure_logging, load_settings
+from api.dependencies import load_predictor_state
+from api.rate_limit import InMemoryRateLimiter
+from api.routes import iot, model, predictions, root, stats
 
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-)
-logger = logging.getLogger("waste_api")
+def create_app() -> FastAPI:
+    """Create and configure the FastAPI application."""
+    settings = load_settings()
+    configure_logging(settings.log_level)
+    predictor_state = load_predictor_state()
+    rate_limiter = InMemoryRateLimiter(
+        per_minute=settings.rate_limit_per_minute,
+        exempt_paths=settings.rate_limit_exempt_paths,
+    )
 
-# IoT ingest API key. When IOT_API_KEY is set, devices must send a matching
-# X-API-Key header. When it is unset (e.g. local demo), the check is skipped.
-IOT_API_KEY = os.getenv("IOT_API_KEY", "").strip()
-RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
-RATE_LIMIT_EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
-_rate_limit_window: Dict[str, deque[float]] = defaultdict(deque)
+    api = FastAPI(
+        title="Waste Volume Prediction API",
+        description="REST API for predicting waste volume using Machine Learning",
+        version="1.0.0",
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
+    api.state.settings = settings
+    api.state.predictor_state = predictor_state
+    api.state.rate_limiter = rate_limiter
 
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=settings.allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-def require_iot_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
-    """Validate the X-API-Key header against IOT_API_KEY when configured."""
-    if not IOT_API_KEY:
-        return  # no key configured; open for local demo use
-    if x_api_key != IOT_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-
-# Import predictor
-try:
-    from export import export_predictions_to_excel, export_predictions_to_pdf
-    from notifications import send_prediction_notifications
-    from predict import WasteVolumePredictor
-    predictor = WasteVolumePredictor()
-    PREDICTOR_LOADED = True
-except FileNotFoundError as e:
-    PREDICTOR_LOADED = False
-    PREDICTOR_ERROR = str(e)
-except Exception as e:
-    PREDICTOR_LOADED = False
-    PREDICTOR_ERROR = f"Failed to load model: {e}"
-
-
-# Create FastAPI app
-app = FastAPI(
-    title="Waste Volume Prediction API",
-    description="REST API for predicting waste volume using Machine Learning",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# Add CORS middleware.
-# Origins are read from the ALLOWED_ORIGINS env var (comma-separated). A
-# wildcard "*" cannot be combined with allow_credentials=True (browsers reject
-# it), so credentials are only enabled when explicit origins are configured.
-_default_origins = (
-    "http://localhost:8501,http://127.0.0.1:8501,"  # Streamlit dashboard
-    "http://localhost:5173,http://127.0.0.1:5173,"  # Vite dev server
-    "http://localhost:4173,http://127.0.0.1:4173"   # Vite preview server
-)
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
-    if origin.strip()
-]
-allow_credentials = "*" not in allowed_origins
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=allow_credentials,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.middleware("http")
-async def rate_limit_requests(request: Request, call_next):
-    """Simple per-client in-memory rate limit for lightweight deployments."""
-    if RATE_LIMIT_PER_MINUTE <= 0 or request.url.path in RATE_LIMIT_EXEMPT_PATHS:
+    @api.middleware("http")
+    async def rate_limit_requests(request: Request, call_next):
+        """Apply per-client rate limiting before route handling."""
+        if not rate_limiter.is_allowed(request):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please retry later."},
+                headers={"Retry-After": "60"},
+            )
         return await call_next(request)
 
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    client_host = forwarded_for.split(",", 1)[0].strip() if forwarded_for else None
-    if not client_host:
-        client_host = request.client.host if request.client else "unknown"
-    key = f"{client_host}:{request.url.path}"
-    now = time.monotonic()
-    request_times = _rate_limit_window[key]
+    api.include_router(root.create_router(predictor_state))
+    api.include_router(stats.router)
+    api.include_router(model.router)
+    api.include_router(iot.create_router(settings))
+    api.include_router(predictions.create_router(predictor_state))
+    return api
+
+
+app = create_app()
+
+# Compatibility aliases for scripts/tests that imported these from api.main.
+settings = app.state.settings
+predictor_state = app.state.predictor_state
+rate_limiter = app.state.rate_limiter
+predictor = predictor_state.predictor
+PREDICTOR_LOADED = predictor_state.loaded
+PREDICTOR_ERROR = predictor_state.error
+IOT_API_KEY = settings.iot_api_key
+RATE_LIMIT_PER_MINUTE = settings.rate_limit_per_minute
+_rate_limit_window = rate_limiter._window
 
-    while request_times and now - request_times[0] > 60:
-        request_times.popleft()
 
-    if len(request_times) >= RATE_LIMIT_PER_MINUTE:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "Rate limit exceeded. Please retry later."},
-            headers={"Retry-After": "60"},
-        )
-
-    request_times.append(now)
-    return await call_next(request)
-
-
-# Pydantic models for request/response
-class PredictionInput(BaseModel):
-    """Input schema for prediction"""
-    date: str = Field(..., description="Date in YYYY-MM-DD format", json_schema_extra={"example": "2025-01-15"})
-    temperature: float = Field(..., ge=24.0, le=35.0, description="Temperature in Celsius", json_schema_extra={"example": 30.5})
-    rainfall: float = Field(..., ge=0.0, le=120.0, description="Rainfall in mm", json_schema_extra={"example": 5.0})
-    humidity: float = Field(..., ge=55.0, le=95.0, description="Humidity percentage", json_schema_extra={"example": 75.0})
-    holiday: int = Field(..., ge=0, le=1, description="Holiday flag (0=No, 1=Yes)", json_schema_extra={"example": 0})
-    weekend: int = Field(..., ge=0, le=1, description="Weekend flag (0=No, 1=Yes)", json_schema_extra={"example": 0})
-    population_density: float = Field(..., ge=3000.0, le=15000.0, description="Population density (people/km2)", json_schema_extra={"example": 9500.0})
-    event_level: int = Field(..., ge=0, le=5, description="Event level (0-5)", json_schema_extra={"example": 1})
-    
-    @field_validator('date')
-    @classmethod
-    def validate_date(cls, v):
-        """Validate date format"""
-        try:
-            datetime.strptime(v, "%Y-%m-%d")
-            return v
-        except ValueError:
-            raise ValueError("Date must be in YYYY-MM-DD format")
-
-
-class DailyPredictionResponse(BaseModel):
-    """Response schema for daily prediction"""
-    prediction_type: str = "daily"
-    date: str
-    predicted_waste_volume: float
-    unit: str = "tons"
-    confidence_interval: Dict[str, float]
-    anomaly: Dict[str, Any]
-    fleet_recommendation: Dict[str, Union[int, float]]
-
-
-class WeeklyPredictionResponse(BaseModel):
-    """Response schema for weekly prediction"""
-    prediction_type: str = "weekly"
-    start_date: str
-    end_date: str
-    total_volume: float
-    average_daily: float
-    unit: str = "tons"
-    confidence_interval: Dict[str, float]
-    daily_predictions: List[Dict]
-
-
-class MonthlyPredictionResponse(BaseModel):
-    """Response schema for monthly prediction"""
-    prediction_type: str = "monthly"
-    start_date: str
-    end_date: str
-    total_volume: float
-    average_daily: float
-    unit: str = "tons"
-    confidence_interval: Dict[str, float]
-    daily_predictions: List[Dict]
-
-
-class HealthResponse(BaseModel):
-    """Health check response"""
-    model_config = ConfigDict(protected_namespaces=())
-
-    status: str
-    model_loaded: bool
-    message: str
-    checks: Dict[str, Any] = Field(default_factory=dict)
-
-
-class NotificationRequest(PredictionInput):
-    """Request schema for notification checks"""
-    threshold: float = Field(..., ge=0.0, description="Alert threshold in tons", json_schema_extra={"example": 100.0})
-    channels: List[str] = Field(default_factory=lambda: ["email"], description="Notification channels: email and/or sms")
-    dry_run: bool = Field(default=True, description="Return notification preview without sending")
-
-    @field_validator("channels")
-    @classmethod
-    def validate_channels(cls, v):
-        """Reject unsupported notification channels instead of silently ignoring them."""
-        allowed_channels = {"email", "sms"}
-        normalized = [channel.strip().lower() for channel in v]
-        invalid_channels = sorted(set(normalized) - allowed_channels)
-        if invalid_channels:
-            raise ValueError(f"Unsupported notification channel(s): {', '.join(invalid_channels)}")
-        if not normalized:
-            raise ValueError("At least one notification channel is required")
-        return normalized
-
-
-class ExportPredictionRequest(PredictionInput):
-    """Request schema for prediction export"""
-    horizon: str = Field(default="weekly", pattern="^(daily|weekly|monthly)$", description="Prediction horizon")
-    file_format: str = Field(default="excel", pattern="^(excel|pdf)$", description="Export format")
-
-
-class BinReadingRequest(BaseModel):
-    """Input schema for ESP32 smart-bin readings."""
-    bin_id: str = Field(..., min_length=1, max_length=80, description="Smart bin identifier", json_schema_extra={"example": "TPS-001"})
-    fill_level: float = Field(..., ge=0.0, le=100.0, description="Bin fill level percentage", json_schema_extra={"example": 72.5})
-    device_id: str = Field(..., min_length=1, max_length=80, description="ESP32 device identifier", json_schema_extra={"example": "ESP32-001"})
-
-    @field_validator("bin_id", "device_id")
-    @classmethod
-    def validate_required_text(cls, v):
-        """Reject blank identifiers after trimming whitespace."""
-        if not v.strip():
-            raise ValueError("Value cannot be blank")
-        return v.strip()
-
-
-class BinReadingResponse(BaseModel):
-    """Response schema for stored smart-bin readings."""
-    id: int
-    bin_id: str
-    device_id: str
-    fill_level: float
-    status: str
-    created_at: str
-
-
-# Endpoints
-@app.get("/", response_model=Dict[str, Any])
-async def root():
-    """Root endpoint with API information"""
-    return {
-        "api_name": "Waste Volume Prediction API",
-        "version": "1.0.0",
-        "description": "REST API for predicting waste volume using Machine Learning",
-        "endpoints": {
-            "health": "/health",
-            "docs": "/docs",
-            "daily_prediction": "/predict/daily",
-            "weekly_prediction": "/predict/weekly",
-            "monthly_prediction": "/predict/monthly",
-            "anomaly_detection": "/detect/anomaly",
-            "notifications": "/notifications/prediction-alert",
-            "prediction_export": "/export/prediction",
-            "iot_ingest": "/iot/bin-reading",
-            "iot_latest": "/iot/bin-readings/latest",
-            "iot_bin_latest": "/iot/bin/{bin_id}/latest"
-        },
-        "status": "operational" if PREDICTOR_LOADED else "model_not_loaded"
-    }
-
-
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
-    checks = {
-        "model_loaded": PREDICTOR_LOADED,
-        "dataset_available": (Path(__file__).parent.parent / "data" / "raw" / "waste_dataset.csv").exists(),
-        "sqlite_writable": False,
-        "pdf_export_available": False,
-    }
-
-    try:
-        init_iot_db(DEFAULT_DB_PATH)
-        checks["sqlite_writable"] = True
-    except Exception as e:
-        checks["sqlite_error"] = str(e)
-
-    try:
-        export_predictions_to_pdf(
-            {"prediction_type": "health", "total_volume": 1.0, "average_daily": 1.0},
-            [{"date": "2025-01-01", "day_name": "Wednesday", "predicted_volume": 1.0}],
-        )
-        checks["pdf_export_available"] = True
-    except Exception as e:
-        checks["pdf_export_error"] = str(e)
-
-    healthy = all([
-        checks["model_loaded"],
-        checks["dataset_available"],
-        checks["sqlite_writable"],
-        checks["pdf_export_available"],
-    ])
-
-    if healthy:
-        return {
-            "status": "healthy",
-            "model_loaded": True,
-            "message": "API is running and production dependencies are available",
-            "checks": checks,
-        }
-    else:
-        return {
-            "status": "unhealthy",
-            "model_loaded": PREDICTOR_LOADED,
-            "message": f"Health check failed: {PREDICTOR_ERROR if not PREDICTOR_LOADED else 'one or more runtime checks failed'}",
-            "checks": checks,
-        }
-
-
-@app.get("/stats/overview", response_model=Dict[str, Any])
-async def stats_overview(trend_days: int = 90):
-    """Headline dataset metrics and a recent waste-volume trend."""
-    if trend_days < 1 or trend_days > 730:
-        raise HTTPException(status_code=400, detail="trend_days must be between 1 and 730")
-    try:
-        return get_dataset_overview(trend_days=trend_days)
-    except DatasetNotFoundError:
-        raise HTTPException(status_code=503, detail="Dataset not available. Train the model first.")
-    except Exception:
-        logger.exception("Failed to build stats overview")
-        raise HTTPException(status_code=500, detail="Failed to load dataset overview")
-
-
-@app.get("/stats/analysis", response_model=Dict[str, Any])
-async def stats_analysis():
-    """Distribution, weekday averages, monthly trend, and correlation matrix."""
-    try:
-        return get_dataset_analysis()
-    except DatasetNotFoundError:
-        raise HTTPException(status_code=503, detail="Dataset not available. Train the model first.")
-    except Exception:
-        logger.exception("Failed to build stats analysis")
-        raise HTTPException(status_code=500, detail="Failed to load dataset analysis")
-
-
-@app.get("/model/performance", response_model=Dict[str, Any])
-async def model_performance():
-    """Evaluation report, parsed tables, and Phase 2 metadata."""
-    try:
-        return get_model_performance()
-    except Exception:
-        logger.exception("Failed to load model performance")
-        raise HTTPException(status_code=500, detail="Failed to load model performance")
-
-
-@app.get("/model/feature-importance.png")
-async def model_feature_importance_image():
-    """Serve the feature importance chart image."""
-    if not FEATURE_IMPORTANCE_IMG.exists():
-        raise HTTPException(status_code=404, detail="Feature importance image not available")
-    return FileResponse(FEATURE_IMPORTANCE_IMG, media_type="image/png")
-
-
-@app.get("/model/prediction-comparison.png")
-async def model_prediction_comparison_image():
-    """Serve the prediction comparison chart image."""
-    if not PREDICTION_COMPARISON_IMG.exists():
-        raise HTTPException(status_code=404, detail="Prediction comparison image not available")
-    return FileResponse(PREDICTION_COMPARISON_IMG, media_type="image/png")
-
-
-@app.post("/iot/bin-reading", response_model=BinReadingResponse, dependencies=[Depends(require_iot_api_key)])
-async def create_bin_reading(reading: BinReadingRequest):
-    """Store one ESP32 smart-bin fill-level reading."""
-    try:
-        return save_bin_reading(
-            bin_id=reading.bin_id,
-            device_id=reading.device_id,
-            fill_level=reading.fill_level,
-        )
-    except Exception:
-        logger.exception("Failed to save bin reading")
-        raise HTTPException(status_code=500, detail="Failed to save bin reading")
-
-
-@app.get("/iot/bin-readings/latest", response_model=List[BinReadingResponse])
-async def latest_bin_readings(limit: int = 20):
-    """Return newest ESP32 smart-bin readings across all bins."""
-    if limit < 1 or limit > 100:
-        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
-
-    try:
-        return get_latest_readings(limit=limit)
-    except Exception:
-        logger.exception("Failed to load bin readings")
-        raise HTTPException(status_code=500, detail="Failed to load bin readings")
-
-
-@app.get("/iot/bin/{bin_id}/latest", response_model=BinReadingResponse)
-async def latest_bin_reading(bin_id: str):
-    """Return the newest ESP32 smart-bin reading for one bin."""
-    try:
-        reading = get_latest_bin_reading(bin_id=bin_id)
-    except Exception:
-        logger.exception("Failed to load bin reading for bin_id=%s", bin_id)
-        raise HTTPException(status_code=500, detail="Failed to load bin reading")
-
-    if reading is None:
-        raise HTTPException(status_code=404, detail=f"No readings found for bin_id '{bin_id}'")
-
-    return reading
-
-
-@app.post("/predict/daily", response_model=DailyPredictionResponse)
-async def predict_daily(input_data: PredictionInput):
-    """
-    Predict waste volume for a single day
-    
-    Args:
-        input_data: Input parameters for prediction
-    
-    Returns:
-        Daily prediction with fleet recommendation
-    
-    Raises:
-        HTTPException: If model is not loaded or prediction fails
-    """
-    if not PREDICTOR_LOADED:
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded. Please train the model first by running: python src/train_model.py"
-        )
-    
-    try:
-        # Convert to dictionary
-        input_dict = input_data.model_dump()
-        
-        # Make prediction with Phase 2 details
-        prediction = predictor.predict_daily_with_details(input_dict)
-        
-        return {
-            "prediction_type": "daily",
-            "date": input_data.date,
-            "predicted_waste_volume": prediction["predicted_waste_volume"],
-            "unit": "tons",
-            "confidence_interval": prediction["confidence_interval"],
-            "anomaly": prediction["anomaly"],
-            "fleet_recommendation": prediction["fleet_recommendation"]
-        }
-
-    except Exception:
-        logger.exception("Daily prediction failed")
-        raise HTTPException(status_code=500, detail="Prediction failed")
-
-
-@app.post("/predict/weekly", response_model=WeeklyPredictionResponse)
-async def predict_weekly(input_data: PredictionInput):
-    """
-    Predict waste volume for 7 consecutive days
-    
-    Args:
-        input_data: Input parameters for prediction (start date)
-    
-    Returns:
-        Weekly prediction with daily breakdown
-    
-    Raises:
-        HTTPException: If model is not loaded or prediction fails
-    """
-    if not PREDICTOR_LOADED:
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded. Please train the model first by running: python src/train_model.py"
-        )
-    
-    try:
-        # Convert to dictionary
-        input_dict = input_data.model_dump()
-        
-        # Make prediction
-        weekly_result = predictor.predict_weekly(input_dict)
-        
-        # Get end date from last prediction
-        end_date = weekly_result['daily_predictions'][-1]['date']
-        
-        return {
-            "prediction_type": "weekly",
-            "start_date": input_data.date,
-            "end_date": end_date,
-            "total_volume": weekly_result['total_volume'],
-            "average_daily": weekly_result['average_daily'],
-            "unit": "tons",
-            "confidence_interval": weekly_result["confidence_interval"],
-            "daily_predictions": weekly_result['daily_predictions']
-        }
-
-    except Exception:
-        logger.exception("Weekly prediction failed")
-        raise HTTPException(status_code=500, detail="Prediction failed")
-
-
-@app.post("/predict/monthly", response_model=MonthlyPredictionResponse)
-async def predict_monthly(input_data: PredictionInput):
-    """
-    Predict waste volume for 30 consecutive days
-    
-    Args:
-        input_data: Input parameters for prediction (start date)
-    
-    Returns:
-        Monthly prediction with daily breakdown
-    
-    Raises:
-        HTTPException: If model is not loaded or prediction fails
-    """
-    if not PREDICTOR_LOADED:
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded. Please train the model first by running: python src/train_model.py"
-        )
-    
-    try:
-        # Convert to dictionary
-        input_dict = input_data.model_dump()
-        
-        # Make prediction
-        monthly_result = predictor.predict_monthly(input_dict)
-        
-        # Get end date from last prediction
-        end_date = monthly_result['daily_predictions'][-1]['date']
-        
-        return {
-            "prediction_type": "monthly",
-            "start_date": input_data.date,
-            "end_date": end_date,
-            "total_volume": monthly_result['total_volume'],
-            "average_daily": monthly_result['average_daily'],
-            "unit": "tons",
-            "confidence_interval": monthly_result["confidence_interval"],
-            "daily_predictions": monthly_result['daily_predictions']
-        }
-
-    except Exception:
-        logger.exception("Monthly prediction failed")
-        raise HTTPException(status_code=500, detail="Prediction failed")
-
-
-@app.post("/detect/anomaly", response_model=Dict[str, Any])
-async def detect_anomaly(input_data: PredictionInput):
-    """Detect whether a prediction input is anomalous."""
-    if not PREDICTOR_LOADED:
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded. Please train the model first by running: python src/train_model.py"
-        )
-
-    try:
-        input_dict = input_data.model_dump()
-        return predictor.detect_anomaly(input_dict)
-    except Exception:
-        logger.exception("Anomaly detection failed")
-        raise HTTPException(status_code=500, detail="Anomaly detection failed")
-
-
-@app.post("/notifications/prediction-alert", response_model=Dict[str, Any])
-async def prediction_alert(request: NotificationRequest):
-    """Send or preview prediction threshold notifications."""
-    if not PREDICTOR_LOADED:
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded. Please train the model first by running: python src/train_model.py"
-        )
-
-    try:
-        input_dict = request.model_dump()
-        for key in ["threshold", "channels", "dry_run"]:
-            input_dict.pop(key, None)
-
-        prediction = predictor.predict_daily_with_details(input_dict)
-        predicted_volume = prediction["predicted_waste_volume"]
-        triggered = predicted_volume >= request.threshold
-
-        if triggered:
-            notification_results = send_prediction_notifications(
-                predicted_volume=predicted_volume,
-                threshold=request.threshold,
-                date=request.date,
-                fleet_recommendation=prediction["fleet_recommendation"],
-                channels=request.channels,
-                dry_run=request.dry_run,
-            )
-        else:
-            notification_results = [{
-                "channel": "none",
-                "sent": False,
-                "dry_run": True,
-                "message": "Prediction is below threshold; no notification sent."
-            }]
-
-        return {
-            "triggered": triggered,
-            "prediction": prediction,
-            "notifications": notification_results
-        }
-    except Exception:
-        logger.exception("Notification workflow failed")
-        raise HTTPException(status_code=500, detail="Notification workflow failed")
-
-
-@app.post("/export/prediction")
-async def export_prediction(request: ExportPredictionRequest):
-    """Export daily, weekly, or monthly predictions to Excel or PDF."""
-    if not PREDICTOR_LOADED:
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded. Please train the model first by running: python src/train_model.py"
-        )
-
-    try:
-        input_dict = request.model_dump()
-        horizon = input_dict.pop("horizon")
-        file_format = input_dict.pop("file_format")
-
-        if horizon == "daily":
-            prediction = predictor.predict_daily_with_details(input_dict)
-            daily_predictions = [{
-                "date": request.date,
-                "day_name": datetime.strptime(request.date, "%Y-%m-%d").strftime("%A"),
-                "predicted_volume": prediction["predicted_waste_volume"],
-                "confidence_interval": prediction["confidence_interval"],
-                "anomaly": prediction["anomaly"],
-            }]
-            summary = {
-                "prediction_type": "daily",
-                "start_date": request.date,
-                "end_date": request.date,
-                "total_volume": prediction["predicted_waste_volume"],
-                "average_daily": prediction["predicted_waste_volume"],
-            }
-        elif horizon == "weekly":
-            result = predictor.predict_weekly(input_dict)
-            daily_predictions = result["daily_predictions"]
-            summary = {
-                "prediction_type": "weekly",
-                "start_date": request.date,
-                "end_date": daily_predictions[-1]["date"],
-                "total_volume": result["total_volume"],
-                "average_daily": result["average_daily"],
-            }
-        else:
-            result = predictor.predict_monthly(input_dict)
-            daily_predictions = result["daily_predictions"]
-            summary = {
-                "prediction_type": "monthly",
-                "start_date": request.date,
-                "end_date": daily_predictions[-1]["date"],
-                "total_volume": result["total_volume"],
-                "average_daily": result["average_daily"],
-            }
-
-        filename = f"waste_prediction_{horizon}.{ 'xlsx' if file_format == 'excel' else 'pdf' }"
-
-        if file_format == "excel":
-            data = export_predictions_to_excel(summary, daily_predictions)
-            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        else:
-            data = export_predictions_to_pdf(summary, daily_predictions)
-            media_type = "application/pdf"
-
-        return StreamingResponse(
-            BytesIO(data),
-            media_type=media_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
-        )
-    except Exception:
-        logger.exception("Export failed")
-        raise HTTPException(status_code=500, detail="Export failed")
-
-
-# Run with: uvicorn api.main:app --reload
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

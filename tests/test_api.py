@@ -6,6 +6,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from fastapi.testclient import TestClient
 
 from api import main
+from api.routes import iot
 
 
 client = TestClient(main.app)
@@ -93,8 +94,8 @@ def test_root_and_health_endpoints_respond():
 
 
 def test_rate_limit_returns_429(monkeypatch):
-    monkeypatch.setattr(main, "RATE_LIMIT_PER_MINUTE", 1)
-    main._rate_limit_window.clear()
+    monkeypatch.setattr(main.rate_limiter, "per_minute", 1)
+    main.rate_limiter.clear()
 
     first = client.get("/")
     second = client.get("/")
@@ -104,8 +105,8 @@ def test_rate_limit_returns_429(monkeypatch):
 
 
 def test_rate_limit_uses_forwarded_client_ip(monkeypatch):
-    monkeypatch.setattr(main, "RATE_LIMIT_PER_MINUTE", 1)
-    main._rate_limit_window.clear()
+    monkeypatch.setattr(main.rate_limiter, "per_minute", 1)
+    main.rate_limiter.clear()
 
     first = client.get("/", headers={"X-Forwarded-For": "203.0.113.10"})
     second = client.get("/", headers={"X-Forwarded-For": "203.0.113.11"})
@@ -115,8 +116,8 @@ def test_rate_limit_uses_forwarded_client_ip(monkeypatch):
 
 
 def test_health_is_exempt_from_rate_limit(monkeypatch):
-    monkeypatch.setattr(main, "RATE_LIMIT_PER_MINUTE", 1)
-    main._rate_limit_window.clear()
+    monkeypatch.setattr(main.rate_limiter, "per_minute", 1)
+    main.rate_limiter.clear()
 
     assert client.get("/health").status_code == 200
     assert client.get("/health").status_code == 200
@@ -138,13 +139,14 @@ def test_notification_rejects_unsupported_channels():
 
 
 def test_iot_ingest_requires_api_key_when_configured(monkeypatch):
-    monkeypatch.setattr(main, "IOT_API_KEY", "secret")
+    monkeypatch.setenv("IOT_API_KEY", "secret")
+    secure_client = TestClient(main.create_app())
 
-    missing_key = client.post(
+    missing_key = secure_client.post(
         "/iot/bin-reading",
         json={"bin_id": "TPS-001", "fill_level": 50, "device_id": "ESP32-001"},
     )
-    wrong_key = client.post(
+    wrong_key = secure_client.post(
         "/iot/bin-reading",
         headers={"X-API-Key": "wrong"},
         json={"bin_id": "TPS-001", "fill_level": 50, "device_id": "ESP32-001"},
@@ -155,9 +157,9 @@ def test_iot_ingest_requires_api_key_when_configured(monkeypatch):
 
 
 def test_iot_ingest_accepts_valid_api_key(monkeypatch):
-    monkeypatch.setattr(main, "IOT_API_KEY", "secret")
+    monkeypatch.setenv("IOT_API_KEY", "secret")
     monkeypatch.setattr(
-        main,
+        iot,
         "save_bin_reading",
         lambda bin_id, device_id, fill_level: {
             "id": 1,
@@ -168,8 +170,9 @@ def test_iot_ingest_accepts_valid_api_key(monkeypatch):
             "created_at": "2026-07-02T00:00:00Z",
         },
     )
+    secure_client = TestClient(main.create_app())
 
-    response = client.post(
+    response = secure_client.post(
         "/iot/bin-reading",
         headers={"X-API-Key": "secret"},
         json={"bin_id": "TPS-001", "fill_level": 50, "device_id": "ESP32-001"},
@@ -186,8 +189,8 @@ def test_iot_latest_limit_validation():
 
 
 def test_export_endpoint_returns_pdf_with_dummy_predictor(monkeypatch):
-    monkeypatch.setattr(main, "PREDICTOR_LOADED", True)
-    monkeypatch.setattr(main, "predictor", DummyPredictor())
+    monkeypatch.setattr(main.predictor_state, "loaded", True)
+    monkeypatch.setattr(main.predictor_state, "predictor", DummyPredictor())
 
     response = client.post(
         "/export/prediction",
