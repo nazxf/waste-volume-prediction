@@ -8,10 +8,11 @@ const Prediction = lazy(() => import("./pages/Prediction"));
 const SmartBinIot = lazy(() => import("./pages/SmartBinIot"));
 const ModelPerformance = lazy(() => import("./pages/ModelPerformance"));
 const About = lazy(() => import("./pages/About"));
+const Settings = lazy(() => import("./pages/Settings"));
 
 export default function App() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-bg px-6 py-8 text-sm text-muted">Memuat halaman...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-ink-950 px-6 py-8 text-sm text-text-lo">Memuat halaman...</div>}>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/smart-bin" element={<SmartBinIot />} />
           <Route path="/model" element={<ModelPerformance />} />
           <Route path="/tentang" element={<About />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
     </Suspense>

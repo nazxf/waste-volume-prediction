@@ -5,9 +5,12 @@ import {
   Info,
   LayoutDashboard,
   LineChart,
+  MoreHorizontal,
+  Settings,
   Sparkles,
   Trash2,
   Truck,
+  X,
 } from "lucide-react";
 import { api } from "../lib/api";
 
@@ -18,7 +21,10 @@ const NAV = [
   { to: "/smart-bin", label: "Smart Bin IoT", code: "04", icon: Trash2 },
   { to: "/model", label: "Performa Model", code: "05", icon: Gauge },
   { to: "/tentang", label: "Tentang", code: "06", icon: Info },
+  { to: "/settings", label: "Settings", code: "07", icon: Settings },
 ];
+
+const MOBILE_PRIMARY = ["/", "/prediksi", "/smart-bin", "/model"];
 
 function useClock() {
   const [now, setNow] = useState(new Date());
@@ -62,12 +68,19 @@ export default function Layout() {
   const now = useClock();
   const { ok, modelLoaded } = useHealth();
   const location = useLocation();
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const active = NAV.find((item) =>
     item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
   );
 
   const statusColor = ok === null ? "var(--color-text-lo)" : ok ? "var(--color-ok)" : "var(--color-full)";
   const statusText = ok === null ? "Menghubungkan" : ok ? "Terhubung" : "Terputus";
+  const primaryMobileNav = NAV.filter((item) => MOBILE_PRIMARY.includes(item.to));
+  const secondaryMobileNav = NAV.filter((item) => !MOBILE_PRIMARY.includes(item.to));
+
+  useEffect(() => {
+    setMobileMoreOpen(false);
+  }, [location.pathname]);
 
   return (
     <div className="relative z-10 flex min-h-screen bg-ink-950">
@@ -149,25 +162,7 @@ export default function Layout() {
           </div>
         </header>
 
-        <nav className="flex gap-1 overflow-x-auto border-b border-line bg-surface-2 px-3 py-2 md:hidden">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                [
-                  "whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium",
-                  isActive ? "bg-amber text-ink-950" : "text-text-mid",
-                ].join(" ")
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <main className="flex-1 px-5 py-6 md:px-8 md:py-8">
+        <main className="flex-1 px-5 pb-24 pt-6 md:px-8 md:py-8">
           <Outlet />
         </main>
 
@@ -175,6 +170,81 @@ export default function Layout() {
           <span className="tnum">Copyright {new Date().getFullYear()}</span> Sistem Prediksi Volume Sampah.
         </footer>
       </div>
+
+      {mobileMoreOpen && (
+        <div className="fixed inset-x-3 bottom-20 z-40 rounded-lg border border-line bg-surface-2 p-3 shadow-2xl md:hidden">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="text-sm font-semibold text-text-hi">Navigasi lainnya</span>
+            <button
+              type="button"
+              onClick={() => setMobileMoreOpen(false)}
+              className="grid h-8 w-8 place-items-center rounded-md text-text-lo hover:bg-surface-3 hover:text-text-hi"
+              aria-label="Tutup navigasi lainnya"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="grid gap-1">
+            {secondaryMobileNav.map((item) => {
+              const Icon = item.icon;
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    [
+                      "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium",
+                      isActive ? "bg-surface-3 text-text-hi" : "text-text-mid hover:bg-surface-3 hover:text-text-hi",
+                    ].join(" ")
+                  }
+                >
+                  <Icon size={17} />
+                  {item.label}
+                </NavLink>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ink-950/95 px-2 pb-2 pt-1.5 backdrop-blur md:hidden">
+        <div className="grid grid-cols-5 gap-1">
+          {primaryMobileNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  [
+                    "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md px-1 text-[0.68rem] font-medium",
+                    isActive ? "bg-surface-3 text-amber" : "text-text-lo",
+                  ].join(" ")
+                }
+              >
+                <Icon size={18} />
+                <span className="max-w-full truncate">{item.label.replace("Smart Bin IoT", "Smart Bin")}</span>
+              </NavLink>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setMobileMoreOpen((open) => !open)}
+            className={[
+              "flex min-h-14 flex-col items-center justify-center gap-1 rounded-md px-1 text-[0.68rem] font-medium",
+              mobileMoreOpen || secondaryMobileNav.some((item) => location.pathname.startsWith(item.to))
+                ? "bg-surface-3 text-amber"
+                : "text-text-lo",
+            ].join(" ")}
+            aria-expanded={mobileMoreOpen}
+          >
+            <MoreHorizontal size={18} />
+            <span>Lainnya</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
